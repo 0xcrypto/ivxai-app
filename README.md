@@ -45,6 +45,32 @@ To install it as an app, open the built site and use "Install" / "Add to Home
 Screen". After the first load it works offline; only the model calls need the
 network.
 
+## Deploying
+
+`.github/workflows/deploy.yml` builds on every push and pull request, and
+publishes to GitHub Pages from `main`.
+
+One-time setup: **Settings → Pages → Build and deployment → Source: GitHub
+Actions**. Nothing else to configure — `base: './'` means the build works from
+a repository subpath, so `https://0xcrypto.github.io/nilgai/` needs no special
+casing, and the service worker scope and manifest `start_url` follow it.
+
+The build job fails the run on two things that would otherwise ship quietly:
+
+- `dist/sw.js` still containing `__PRECACHE_MANIFEST__` — meaning the precache
+  plugin stopped running and the app would cache nothing offline.
+- any CDN origin appearing in the bundle, which would break the promise that
+  nothing third-party loads at runtime.
+
+To check a build locally the way Pages serves it:
+
+```sh
+npm run build
+mkdir -p /tmp/pages/nilgai && cp -R dist/* /tmp/pages/nilgai/
+cd /tmp/pages && python3 -m http.server 8125
+# http://localhost:8125/nilgai/
+```
+
 ## Setting up a provider
 
 Open **Settings → Providers**. Two are seeded for you (Ollama and OpenRouter);
