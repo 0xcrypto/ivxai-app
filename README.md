@@ -87,7 +87,19 @@ that speaks the OpenAI chat API.
 | LM Studio | `http://localhost:1234/v1` | not needed |
 | llama.cpp | `http://localhost:8080/v1` | not needed |
 
-Paste the key, hit **Save**, then **Fetch models** to populate the model picker.
+Paste the key, then **Fetch models** to populate the picker.
+
+### When the model list cannot be fetched
+
+Plenty of endpoints have no `/models` route — Azure OpenAI deployments, bare
+llama.cpp builds, private proxies — and some refuse to list one without a key.
+That never blocks you: the model picker (the chip above the composer) and
+**Settings → Providers → *provider* → Default model** both offer **Type a model
+name**, and a failed fetch explains itself in place rather than leaving an empty
+list.
+
+Hand-typed names are kept per provider in `customModels`, so they survive a
+later **Refresh the list** and stay one tap away.
 
 ### CORS
 
@@ -134,6 +146,9 @@ the keys.
   you tick the box. Import merges a file back in.
 - **Erase everything** wipes IndexedDB, preferences and the offline cache.
 - **Search** matches chat titles and message text.
+- **First run** opens a short welcome sheet explaining what the app is. It
+  records `welcomeSeenAt` in IndexedDB so it appears once; **Settings → About →
+  What is NilgAI UI?** brings it back.
 - **Shortcuts**: `Enter` sends (configurable), `Shift+Enter` for a newline,
   `Esc` closes the drawer or pops a sheet screen.
 - **Local runtimes** are seeded by default (Ollama, LM Studio) and marked
@@ -229,4 +244,13 @@ rather than overriding hundreds of derived variables. The one exception to the
 monochrome rule is a muted red for destructive actions — without it "Erase
 everything" looks identical to "Export".
 
-Halfmoon CSS is MIT licensed, © 2023 Tahmid Khan. IBM Plex is SIL OFL, © IBM.
+## Licence
+
+NilgAI UI is free software under the **GNU General Public License v3.0 or
+later** — see [LICENSE](LICENSE). You may use, study, share and modify it; if
+you distribute a modified version, it has to carry the same licence and its
+source has to be available. Because the app is delivered to a browser, the
+in-app **Settings → About** links to both the source and the licence.
+
+Bundled dependencies keep their own terms: Halfmoon CSS is MIT, © 2023 Tahmid
+Khan; IBM Plex is SIL OFL, © IBM; Vite is MIT.

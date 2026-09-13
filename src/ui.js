@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 0xcrypto
+
 /* DOM helpers and the bottom-sheet stack.
 
    Every panel in the app — settings, pickers, confirmations — is a screen on
@@ -140,7 +143,12 @@ export function setSheetTitle(title) {
 
 /* ── question screens ──────────────────────────────────────── */
 
-function ask(title, render) {
+/**
+ * Push a screen that asks something and resolves when it is answered, or with
+ * null if the user dismisses it. Exported so callers can build richer question
+ * screens than confirm/prompt.
+ */
+export function askScreen(title, render) {
   return new Promise(resolve => {
     let settled = false;
     const nested = sheetIsOpen();
@@ -162,6 +170,8 @@ function ask(title, render) {
     else openSheet(screen);
   });
 }
+
+const ask = askScreen;
 
 export function confirmAction({ title = 'Are you sure?', body = '', okText = 'Confirm', danger = true }) {
   return ask(title, done => el('div', {}, [

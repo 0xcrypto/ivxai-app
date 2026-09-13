@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 0xcrypto
+
 /* Provider adapters. Every request here goes straight from the browser to the
    endpoint configured by the user — there is no server in between. */
 
@@ -97,9 +100,13 @@ function networkHint(provider, err) {
   if (mixed && !local) {
     return 'Blocked: this page is HTTPS and the endpoint is plain HTTP.';
   }
-  if (provider.kind === 'ollama' || local) {
-    return `Could not reach ${provider.baseUrl}. Is it running, and does it allow this origin? ` +
-      `For Ollama: OLLAMA_ORIGINS='${location.origin}' ollama serve`;
+  if (provider.kind === 'ollama') {
+    return `Could not reach ${provider.baseUrl}. Is Ollama running, and started with ` +
+      `OLLAMA_ORIGINS='${location.origin}'?`;
+  }
+  if (local) {
+    return `Could not reach ${provider.baseUrl}. Is it running, and does it allow ` +
+      `requests from ${location.origin}?`;
   }
   return `Network or CORS failure calling ${provider.baseUrl}. ${err?.message || ''}`.trim();
 }
@@ -318,8 +325,29 @@ export function makeProvider(preset) {
     kind: preset.kind,
     baseUrl: preset.baseUrl,
     preset: preset.key,
-    models: [],
+    models: [],          // what /models reported
+    customModels: [],    // what the user typed in by hand
     defaultModel: '',
     extraHeaders: {},
   };
+}
+
+/** Everything the user can pick: fetched plus hand-typed, deduped. */
+export const knownModels = provider => [...new Set([
+  ...(provider.models || []),
+  ...(provider.customModels || []),
+])].sort((a, b) => a.localeCompare(b));
+
+/**
+ * Keep a hand-typed model around so it survives a later refresh of the
+ * fetched list. Returns the cleaned name, or '' if there was nothing to keep.
+ */
+export function rememberModel(provider, model) {
+  const name = String(model || '').trim();
+  if (!name) return '';
+  if (!Array.isArray(provider.customModels)) provider.customModels = [];
+  if (!provider.customModels.includes(name) && !(provider.models || []).includes(name)) {
+    provider.customModels.push(name);
+  }
+  return name;
 }

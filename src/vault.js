@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 0xcrypto
+
 /* API key storage. Plaintext in IndexedDB by default; AES-GCM with a
    PBKDF2-derived key once the user sets a passphrase. The derived key exists
    only in memory for the life of the tab — nothing to exfiltrate at rest. */

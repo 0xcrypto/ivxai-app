@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 0xcrypto
+
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
@@ -66,6 +69,47 @@ function serviceWorkerPrecache() {
   };
 }
 
+/**
+ * Puts the licence notices back on the built assets.
+ *
+ * The bundle is the form most people actually receive, and it has to say what
+ * it is. Rolldown's minifier drops banner comments, and it also strips
+ * Halfmoon's own MIT notice — which that licence requires be kept — so both
+ * are prepended here after the bundle is written.
+ */
+function licenceNotices() {
+  const js = '/*! NilgAI UI | GPL-3.0-or-later | Copyright (C) 2026 0xcrypto\n' +
+    ' * Source: https://github.com/0xcrypto/nilgai */\n';
+  const css = '/*! NilgAI UI | GPL-3.0-or-later | Copyright (C) 2026 0xcrypto\n' +
+    ' * Source: https://github.com/0xcrypto/nilgai\n' +
+    ' * Bundles Halfmoon CSS v2.0.2 (MIT, Copyright (c) 2023 Tahmid Khan)\n' +
+    ' * and IBM Plex (SIL Open Font License 1.1, Copyright IBM Corp.) */\n';
+
+  let outDir = 'dist';
+  return {
+    name: 'nilgai:licence-notices',
+    apply: 'build',
+    configResolved(config) { outDir = config.build.outDir; },
+    async closeBundle() {
+      const dir = join(outDir, 'assets');
+      let entries = [];
+      try {
+        entries = await readdir(dir);
+      } catch {
+        return;
+      }
+      for (const name of entries) {
+        const banner = name.endsWith('.js') ? js : name.endsWith('.css') ? css : null;
+        if (!banner) continue;
+        const file = join(dir, name);
+        const body = await readFile(file, 'utf8');
+        if (body.startsWith('/*!')) continue;
+        await writeFile(file, banner + body);
+      }
+    },
+  };
+}
+
 /** Actual installed versions, so the About screen cannot drift from reality. */
 const installed = name => {
   try {
@@ -86,7 +130,7 @@ export default defineConfig({
   },
   // Relative base so the build can be dropped in any directory of any host.
   base: './',
-  plugins: [serviceWorkerPrecache()],
+  plugins: [licenceNotices(), serviceWorkerPrecache()],
   build: {
     target: 'es2022',
     cssCodeSplit: false,

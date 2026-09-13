@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 0xcrypto */
+
 /* NilgAI UI — mobile-first app shell.
 
    One column at every width. Navigation is a drawer, every panel is a bottom
@@ -532,4 +535,14 @@ a.item { text-decoration: none; color: var(--bs-body-color); }
   .sheet-host.open .sheet { transform: translate(-50%, 0); }
   .snacks { bottom: 1.5rem; }
   .jump { bottom: 9.5rem; }
+}
+
+/* ── first-run introduction ────────────────────────────────── */
+
+.intro { display: flex; flex-direction: column; gap: 1.125rem; padding-top: .25rem; }
+.intro-title { font-weight: 600; font-size: .9375rem; }
+.intro-body {
+  margin: .25rem 0 0;
+  font-size: .875rem; line-height: 1.6;
+  color: var(--bs-secondary-color);
 }

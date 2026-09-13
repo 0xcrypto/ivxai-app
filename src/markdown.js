@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 0xcrypto
+
 /* A small Markdown subset renderer.
 
    Security model: the source is escaped before any markup is generated, and

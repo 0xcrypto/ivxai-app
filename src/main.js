@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 0xcrypto
+
 /* NilgAI UI — a local-only AI chat client.
 
    No analytics, no third-party requests, no backend. The only outbound traffic
@@ -20,10 +23,10 @@ import * as store from './store.js';
 import * as vault from './vault.js';
 import * as api from './providers.js';
 import { renderMarkdown } from './markdown.js';
-import { openSettings } from './settings.js';
+import { openSettings, openIntro } from './settings.js';
 import {
-  $, el, clear, toast, initSheet, openSheet, pushScreen, closeSheet, confirmAction,
-  promptText, chooseFromList, copyText, downloadJSON, downloadBlob, groupLabel, autosize,
+  $, el, clear, toast, initSheet, openSheet, pushScreen, closeSheet, refreshSheet,
+  confirmAction, promptText, copyText, downloadJSON, downloadBlob, groupLabel, autosize,
 } from './ui.js';
 
 const DEFAULTS = {
@@ -87,8 +90,21 @@ async function boot() {
   if (last) await openConversation(last.id);
   else startDraft();
 
-  if (!ready) askUnlock();
+  // First run gets the introduction; a returning user with a locked vault gets
+  // the unlock prompt. Never both — one sheet at a time.
+  const greeted = await greetOnFirstVisit();
+  if (!ready && !greeted) askUnlock();
+
   registerServiceWorker();
+}
+
+/** Returns true when the welcome sheet was shown. */
+async function greetOnFirstVisit() {
+  if (await store.kvGet('welcomeSeenAt')) return false;
+  // Recorded before it is dismissed, so a reload does not show it twice.
+  await store.kvSet('welcomeSeenAt', Date.now());
+  openIntro(bridge);
+  return true;
 }
 
 function registerServiceWorker() {
@@ -320,16 +336,23 @@ function footNode(msg) {
 
 function welcomeNode() {
   const provider = currentProvider();
+
   const starters = [
-    'Explain what a service worker does, briefly.',
-    'Draft a polite follow-up about an unanswered invoice.',
-    'Give me a 20-minute bodyweight workout.',
+    'Why privacy matters, even if I have nothing to hide',
+    'What can a website work out about me from my browser alone?',
+    'Explain end-to-end encryption in plain English',
   ];
+
+  // Vendor neutral: the app has no opinion about whose API you point it at, so
+  // the empty state says only what is true of every one of them. Which provider
+  // and model are in play is already on the chip above the composer.
+  const subtitle = provider
+    ? 'Your chats and keys are stored only in this browser.'
+    : 'Add a provider in Settings to get started.';
+
   return el('div', { class: 'welcome' }, [
-    el('h2', { text: 'Ask anything' }),
-    el('p', { text: provider
-      ? `${provider.name} · chats and keys stay in this browser.`
-      : 'Add a provider in Settings to get started.' }),
+    el('h2', { text: 'Private by default' }),
+    el('p', { text: subtitle }),
     ...starters.map(text => el('button', {
       class: 'starter', type: 'button', text,
       onclick: () => { dom.input.value = text; autosize(dom.input); updateSendState(); dom.input.focus(); },
@@ -389,7 +412,7 @@ async function handleSubmit(ev) {
   const provider = currentProvider();
   if (!provider) { openSettings(bridge); return; }
 
-  const model = dom.chipText.dataset.model || state.conv.model || provider.defaultModel;
+  const model = state.conv.model || provider.defaultModel;
   if (!model) { openModelPicker(); return; }
 
   const { encrypted, unlocked } = vault.status();
@@ -539,54 +562,95 @@ function openModelPicker() {
   openSheet({ title: 'Model', render: modelScreen });
 }
 
+/** Provider id -> why its model list could not be fetched. */
+const listErrors = new Map();
+
+async function useModel(provider, model) {
+  state.conv.providerId = provider.id;
+  state.conv.model = model;
+  if (!provider.defaultModel) provider.defaultModel = model;
+  await saveProviders();
+  if (!state.conv.draft) await persistConversation();
+  updateChip();
+  closeSheet();
+}
+
+async function loadModelList(provider) {
+  const busy = toast(`Asking ${provider.name}…`, '', 20000);
+  try {
+    provider.models = await api.listModels(provider, vault.getKey(provider.id));
+    if (provider.models.length) listErrors.delete(provider.id);
+    else listErrors.set(provider.id, 'That endpoint listed no models.');
+    await saveProviders();
+  } catch (err) {
+    listErrors.set(provider.id, err.message);
+  }
+  busy.remove();
+  refreshSheet();
+}
+
+async function typeModelFor(provider) {
+  const name = await promptText({
+    title: 'Model name',
+    placeholder: provider.kind === 'ollama' ? 'llama3.2' : 'gpt-4o-mini',
+    okText: 'Use this model',
+  });
+  if (!name) return;
+  api.rememberModel(provider, name);
+  await useModel(provider, name);
+}
+
 function modelScreen() {
   const current = currentProvider();
   const blocks = [];
 
   for (const provider of state.providers) {
-    const models = provider.models || [];
-    const rows = models.length
-      ? models.map(model => el('button', {
-          class: `item${provider.id === current?.id && model === state.conv?.model ? ' is-active' : ''}`,
-          type: 'button',
-          onclick: async () => {
-            state.conv.providerId = provider.id;
-            state.conv.model = model;
-            if (!state.conv.draft) await persistConversation();
-            updateChip();
-            closeSheet();
-          },
-        }, [
-          el('span', { class: 'item-main' }, [el('span', { class: 'item-title', text: model })]),
-          el('span', { class: 'item-check', text: provider.id === current?.id && model === state.conv?.model ? '✓' : '' }),
-        ]))
-      : [el('button', {
-          class: 'item', type: 'button',
-          onclick: async () => {
-            const busy = toast(`Asking ${provider.name}…`, '', 20000);
-            try {
-              provider.models = await api.listModels(provider, vault.getKey(provider.id));
-              await saveProviders();
-              busy.remove();
-              openModelPicker();
-            } catch (err) {
-              busy.remove();
-              toast(err.message, 'err', 9000);
-            }
-          },
-        }, [
-          el('span', { class: 'item-main' }, [
-            el('span', { class: 'item-title', text: 'Load models' }),
-            el('span', { class: 'item-sub', text: provider.baseUrl || 'No address set' }),
-          ]),
-        ])];
+    const models = api.knownModels(provider);
+    const isCurrent = model => provider.id === current?.id && model === state.conv?.model;
 
+    const rows = models.map(model => el('button', {
+      class: `item${isCurrent(model) ? ' is-active' : ''}`,
+      type: 'button',
+      onclick: () => useModel(provider, model),
+    }, [
+      el('span', { class: 'item-main' }, [el('span', { class: 'item-title', text: model })]),
+      el('span', { class: 'item-check', text: isCurrent(model) ? '✓' : '' }),
+    ]));
+
+    // Typing a name is always available — a provider with no /models route is
+    // perfectly usable, you just have to know what you want.
+    rows.push(el('button', {
+      class: 'item', type: 'button', onclick: () => typeModelFor(provider),
+    }, [
+      el('span', { class: 'item-main' }, [
+        el('span', { class: 'item-title', text: 'Type a model name' }),
+      ]),
+      el('span', { class: 'item-chevron', text: '›' }),
+    ]));
+
+    // Keyed off fetched models, not known ones: someone who typed a name to get
+    // going should still be able to fetch the real list once CORS is sorted.
+    if (!(provider.models || []).length) {
+      rows.unshift(el('button', {
+        class: 'item', type: 'button', onclick: () => loadModelList(provider),
+      }, [
+        el('span', { class: 'item-main' }, [
+          el('span', { class: 'item-title', text: 'Fetch the model list' }),
+          el('span', { class: 'item-sub', text: provider.baseUrl || 'No address set' }),
+        ]),
+      ]));
+    }
+
+    const problem = listErrors.get(provider.id);
     blocks.push(el('div', { class: 'group' }, [
       el('div', { class: 'group-label' }, [
         provider.name,
         api.isLocalUrl(provider.baseUrl) ? ' · local' : '',
       ]),
       el('div', { class: 'item-list' }, rows),
+      problem
+        ? el('div', { class: 'group-note', text: `${problem} Type the model name instead.` })
+        : null,
     ]));
   }
 
@@ -816,7 +880,11 @@ const bridge = {
   setUI: saveUI,
   applyAppearance,
   askUnlock,
-  refreshChrome: () => { updateChip(); renderConvList(); },
+  refreshChrome: () => {
+    updateChip();
+    renderConvList();
+    if (!state.messages.length) renderMessages();
+  },
   reloadData: async () => {
     state.providers = await store.kvGet('providers', state.providers);
     state.defaults = { ...DEFAULTS, ...(await store.kvGet('defaults', {})) };

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 0xcrypto
+
 /* Settings, as a stack of screens on the bottom sheet.
 
    Each screen shows one group of related things; anything deeper is a row you
@@ -7,8 +10,8 @@ import * as store from './store.js';
 import * as vault from './vault.js';
 import * as api from './providers.js';
 import {
-  el, toast, openSheet, pushScreen, popScreen, refreshSheet, confirmAction,
-  promptText, chooseFromList, downloadJSON,
+  el, toast, openSheet, pushScreen, popScreen, closeSheet, refreshSheet,
+  confirmAction, promptText, chooseFromList, askScreen, downloadJSON,
 } from './ui.js';
 
 let app;                                   // bridge back to the chat shell
@@ -70,6 +73,45 @@ const field = (label, control, note) => el('div', { class: 'field' }, [
   control,
   note ? el('div', { class: 'field-note', text: note }) : null,
 ]);
+
+/* ── first run ─────────────────────────────────────────────── */
+
+export function openIntro(bridge) {
+  if (bridge) app = bridge;
+  openSheet({ title: 'Welcome to NilgAI UI ✨', render: introScreen });
+}
+
+function introScreen() {
+  const point = (title, body) => el('div', { class: 'intro-point' }, [
+    el('div', { class: 'intro-title', text: title }),
+    el('p', { class: 'intro-body', text: body }),
+  ]);
+
+  return el('div', {}, [
+    el('div', { class: 'intro' }, [
+      point('A UI for your LLM API',
+        'Bring a key from any provider, or point it at a model running on your ' +
+        'own machine. This is the interface — you choose the engine.'),
+      point('Private and local first',
+        'Ollama, LM Studio, llama.cpp and friends are first-class here, and a scan ' +
+        'finds the ones already running. Hosted providers work too; the choice and ' +
+        'the key stay yours.'),
+      point('Lightweight, and it runs anywhere',
+        'One page in a browser. No backend, no account, no telemetry. Your chats ' +
+        'and keys are stored here and shipped nowhere.'),
+    ]),
+    el('div', { class: 'sheet-actions' }, [
+      el('button', {
+        class: 'btn btn-primary btn-block', type: 'button', text: 'Get started',
+        onclick: () => closeSheet(),
+      }),
+      el('button', {
+        class: 'btn btn-secondary btn-block', type: 'button', text: 'Set up a provider',
+        onclick: () => { openSettings(app); pushScreen({ title: 'Providers', render: providersScreen }); },
+      }),
+    ]),
+  ]);
+}
 
 /* ── root ──────────────────────────────────────────────────── */
 
@@ -254,7 +296,7 @@ function providerScreen(provider) {
         onclick: () => pickModelFor(provider),
       }),
       actionRow(provider.models?.length ? `Refresh models (${provider.models.length} cached)` : 'Fetch models', {
-        onclick: () => fetchModels(provider),
+        onclick: async () => { await fetchModels(provider); refreshSheet(); },
       }),
     ], preset?.hint),
 
@@ -281,6 +323,7 @@ function providerScreen(provider) {
   ]);
 }
 
+/** Returns true when the list came back; false is a normal outcome here. */
 async function fetchModels(provider) {
   const busy = toast(`Asking ${provider.name}…`, '', 20000);
   try {
@@ -289,24 +332,63 @@ async function fetchModels(provider) {
     await app.saveProviders();
     app.refreshChrome();
     busy.remove();
-    toast(`${provider.models.length} models available`, 'ok');
-    refreshSheet();
+    toast(provider.models.length
+      ? `${provider.models.length} models available`
+      : 'That endpoint listed no models — type the name instead', provider.models.length ? 'ok' : 'err');
+    return provider.models.length > 0;
   } catch (err) {
     busy.remove();
-    toast(err.message, 'err', 9000);
+    toast(`${err.message} — you can still type the model name`, 'err', 9000);
+    return false;
   }
 }
 
-async function pickModelFor(provider) {
-  if (!provider.models?.length) {
-    await fetchModels(provider);
-    if (!provider.models?.length) return;
-  }
-  const model = await chooseFromList({
-    title: 'Default model',
-    items: provider.models.map(m => ({ value: m, label: m })),
-    selected: provider.defaultModel,
+/**
+ * Pick a model for a provider. Manual entry is always offered: plenty of
+ * endpoints have no /models route at all (Azure deployments, bare llama.cpp
+ * builds, private proxies) or refuse to list one without a key.
+ */
+export function chooseModel(provider, selected, title = 'Model') {
+  return askScreen(title, done => {
+    const models = api.knownModels(provider);
+
+    const typeItIn = async () => {
+      const name = await promptText({
+        title: 'Model name',
+        value: selected || '',
+        placeholder: provider.kind === 'ollama' ? 'llama3.2' : 'gpt-4o-mini',
+        okText: 'Use this model',
+      });
+      if (!name) return;
+      api.rememberModel(provider, name);
+      await app.saveProviders();
+      done(name);
+    };
+
+    return el('div', {}, [
+      models.length ? el('div', { class: 'group' }, [
+        el('div', { class: 'item-list' }, models.map(m => el('button', {
+          class: `item${m === selected ? ' is-active' : ''}`, type: 'button', onclick: () => done(m),
+        }, [
+          el('span', { class: 'item-main' }, [el('span', { class: 'item-title', text: m })]),
+          el('span', { class: 'item-check', text: m === selected ? '✓' : '' }),
+        ]))),
+      ]) : null,
+
+      group(null, [
+        actionRow('Type a model name', { onclick: typeItIn }),
+        actionRow(models.length ? 'Refresh the list' : 'Fetch the model list', {
+          sub: provider.baseUrl || 'No address set',
+          onclick: async () => { await fetchModels(provider); refreshSheet(); },
+        }),
+      ], models.length ? null : 'No list yet. Fetch it, or just type the name — ' +
+        'some endpoints do not publish one.'),
+    ]);
   });
+}
+
+async function pickModelFor(provider) {
+  const model = await chooseModel(provider, provider.defaultModel, 'Default model');
   if (!model) return;
   provider.defaultModel = model;
   await app.saveProviders();
@@ -519,6 +601,18 @@ function aboutScreen() {
       para('The only network requests it makes are the ones you ask for: chat completions ' +
            'and model lists, sent straight to the endpoint you configured.'),
     ]),
+    group(null, [
+      actionRow('What is NilgAI UI?', { sub: 'The welcome tour', onclick: () => openIntro() }),
+    ]),
+
+    // Free software: the people running it should be able to find the source
+    // and the terms without leaving the app.
+    group('This app', [
+      linkRow('Source code', 'https://github.com/0xcrypto/nilgai', 'github.com/0xcrypto/nilgai'),
+      linkRow('Licence', 'https://www.gnu.org/licenses/gpl-3.0.html', 'GNU GPL v3 or later'),
+    ], 'Free software: you may use, study, share and change it, provided your ' +
+       'changes carry the same licence.'),
+
     group('Where your data lives', [
       actionRow('IndexedDB · nilgai', { sub: 'Conversations, messages, providers, API keys' }),
       actionRow('localStorage · nilgai.ui', { sub: 'Theme and layout preferences' }),

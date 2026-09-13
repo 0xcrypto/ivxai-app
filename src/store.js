@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 0xcrypto
+
 /* Persistence. Everything lives in this browser: IndexedDB for content,
    localStorage for a handful of UI preferences. Nothing is ever uploaded. */
 

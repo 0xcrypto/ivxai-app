@@ -4,6 +4,13 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Local-only AI chat client. Keys and conversations stay in the browser.",
+  "license": "GPL-3.0-or-later",
+  "author": "0xcrypto (https://eval.blog)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xcrypto/nilgai.git"
+  },
+  "homepage": "https://0xcrypto.github.io/nilgai/",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

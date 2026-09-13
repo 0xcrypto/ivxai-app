@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 0xcrypto
+
 /* A throwaway OpenAI-compatible endpoint for trying the app out without a key.
 
    node tools/mock-provider.mjs        # listens on http://localhost:8124/v1

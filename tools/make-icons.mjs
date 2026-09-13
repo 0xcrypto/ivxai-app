@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 0xcrypto
+
 /* Renders the PNG app icons from scratch — no image libraries, no binaries.
    Run with: node tools/make-icons.mjs   (only needed if the artwork changes)
 
