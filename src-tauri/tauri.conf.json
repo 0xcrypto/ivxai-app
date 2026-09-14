@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "NilgAI",
+  "version": "0.1.0",
+  "identifier": "blog.eval.nilgai",
+  "build": {
+    "beforeDevCommand": "npm --prefix web run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm --prefix web run build",
+    "frontendDist": "../web/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "NilgAI",
+        "width": 1100,
+        "height": 820,
+        "minWidth": 360,
+        "minHeight": 480,
+        "center": true,
+        "resizable": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "A private AI chat client for local and hosted models.",
+    "longDescription": "NilgAI UI as an installed app. Keys and conversations stay on this device; provider calls go out through a loopback bridge so endpoints that refuse browser origins still work.",
+    "copyright": "Copyright (C) 2026 0xcrypto. GPL-3.0-or-later.",
+    "licenseFile": "../LICENSE",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

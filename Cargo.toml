@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 0xcrypto
+
+[workspace]
+resolver = "2"
+members = ["crates/nilgai-bridge", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+authors = ["0xcrypto <https://eval.blog>"]
+repository = "https://github.com/0xcrypto/nilgai-app"
+
+# The bridge is meant to be a small thing you drop on a machine, and the Tauri
+# bundle is meant to be a small thing you download. Both want the same profile.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

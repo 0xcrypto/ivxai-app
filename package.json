@@ -1,0 +1,25 @@
+{
+  "name": "nilgai-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Desktop and mobile NilgAI UI, plus the standalone CORS bridge.",
+  "license": "GPL-3.0-or-later",
+  "author": "0xcrypto (https://eval.blog)",
+  "repository": { "type": "git", "url": "git+https://github.com/0xcrypto/nilgai-app.git" },
+  "scripts": {
+    "postinstall": "npm --prefix web install",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "android": "tauri android dev",
+    "ios": "tauri ios dev",
+    "web:build": "npm --prefix web run build",
+    "bridge": "cargo run --release -p nilgai-bridge --",
+    "bridge:build": "cargo build --release -p nilgai-bridge",
+    "test": "cargo test --workspace",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

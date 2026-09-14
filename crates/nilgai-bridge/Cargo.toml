@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 0xcrypto
+
+[package]
+name = "nilgai-bridge"
+description = "A loopback CORS bridge for NilgAI UI: forwards browser calls to any LLM endpoint."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "nilgai_bridge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nilgai-bridge"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[dependencies]
+bytes = "1.12.1"
+futures-util = "0.3.34"
+getrandom = "0.4.3"
+http-body-util = "0.1.5"
+hyper = { version = "1.11.1", features = ["server", "http1"] }
+hyper-util = { version = "0.1.20", features = ["tokio"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["stream", "rustls", "http2", "charset", "system-proxy"] }
+tokio = { version = "1.53.1", features = ["net", "io-util", "rt", "time", "fs"] }
+
+[features]
+default = ["cli"]
+# The daemon needs a runtime and a Ctrl-C handler; the library, embedded in the
+# Tauri app, borrows the host's runtime and wants neither.
+cli = ["tokio/macros", "tokio/signal"]

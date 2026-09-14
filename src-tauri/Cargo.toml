@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 0xcrypto
+
+[package]
+name = "nilgai-app"
+description = "NilgAI UI as a desktop and mobile app, with the CORS bridge built in."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+# Tauri builds the mobile targets as a library and links it from the platform
+# project, so this crate has to be all three shapes at once.
+name = "nilgai_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# The same server the standalone daemon runs. Desktop, mobile and "just the
+# daemon" therefore take one code path through the UI, not three.
+nilgai-bridge = { path = "../crates/nilgai-bridge", default-features = false }
+tokio = { version = "1", features = ["net", "rt"] }

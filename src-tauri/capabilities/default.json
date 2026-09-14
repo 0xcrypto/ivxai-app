@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The app talks to providers over the bridge on loopback, so it needs nothing beyond the core window APIs.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
