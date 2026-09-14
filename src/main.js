@@ -22,6 +22,7 @@ import './styles/app.css';
 import * as store from './store.js';
 import * as vault from './vault.js';
 import * as api from './providers.js';
+import * as bridge from './bridge.js';
 import { renderMarkdown } from './markdown.js';
 import { openSettings, openIntro } from './settings.js';
 import {
@@ -73,6 +74,9 @@ async function boot() {
   applyAppearance();
 
   const ready = await vault.init();
+  // Reads the saved setting only; whether the bridge is actually up is settled
+  // by the verify() below, which must not hold up the first paint.
+  await bridge.init();
   state.providers = await store.kvGet('providers', []);
   state.defaults = { ...DEFAULTS, ...(await store.kvGet('defaults', {})) };
 
@@ -96,6 +100,10 @@ async function boot() {
   if (!ready && !greeted) askUnlock();
 
   registerServiceWorker();
+
+  // If the bridge went away since last time, the next provider call says so
+  // rather than failing as a bare CORS error.
+  bridge.verify();
 }
 
 /** Returns true when the welcome sheet was shown. */
@@ -103,7 +111,7 @@ async function greetOnFirstVisit() {
   if (await store.kvGet('welcomeSeenAt')) return false;
   // Recorded before it is dismissed, so a reload does not show it twice.
   await store.kvSet('welcomeSeenAt', Date.now());
-  openIntro(bridge);
+  openIntro(shell);
   return true;
 }
 
@@ -410,7 +418,7 @@ async function handleSubmit(ev) {
   if (!text) return;
 
   const provider = currentProvider();
-  if (!provider) { openSettings(bridge); return; }
+  if (!provider) { openSettings(shell); return; }
 
   const model = state.conv.model || provider.defaultModel;
   if (!model) { openModelPicker(); return; }
@@ -658,7 +666,7 @@ function modelScreen() {
     el('div', { class: 'item-list' }, [
       el('button', {
         class: 'item', type: 'button',
-        onclick: () => openSettings(bridge),
+        onclick: () => openSettings(shell),
       }, [
         el('span', { class: 'item-main' }, [el('span', { class: 'item-title', text: 'Manage providers' })]),
         el('span', { class: 'item-chevron', text: '›' }),
@@ -871,9 +879,9 @@ async function askUnlock() {
   }
 }
 
-/* ── the bridge settings.js talks to ───────────────────────── */
+/* ── what settings.js calls back into ──────────────────────── */
 
-const bridge = {
+const shell = {
   getProviders: () => state.providers,
   saveProviders,
   getUI: () => state.ui,
@@ -926,7 +934,7 @@ function bindEvents() {
   $('#scrim').addEventListener('click', closeDrawer);
   $('#btnNewChat').addEventListener('click', () => { startDraft(); closeDrawer(); dom.input.focus(); });
   $('#btnChatMenu').addEventListener('click', openChatMenu);
-  $('#btnSettings').addEventListener('click', () => { closeDrawer(); openSettings(bridge); });
+  $('#btnSettings').addEventListener('click', () => { closeDrawer(); openSettings(shell); });
   dom.chip.addEventListener('click', openModelPicker);
   $('#btnJump').addEventListener('click', scrollToBottom);
 

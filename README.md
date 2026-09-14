@@ -16,7 +16,9 @@ from your own origin.
 - **A Content-Security-Policy that enforces it.** `script-src 'self'` — the page
   cannot execute code from anywhere else, even if something tried.
 - **The only outbound requests are yours.** Chat completions and model lists, to
-  the base URL you configured. You can verify this in the Network panel.
+  the base URL you configured. You can verify this in the Network panel. The one
+  detour is the optional [CORS bridge](#cors), which is a program on your own
+  machine, off by default, and still sends your request to your endpoint.
 - **Your data stays put.** Conversations and messages live in IndexedDB; keys
   live there too, optionally encrypted with a passphrase you choose.
 
@@ -113,14 +115,35 @@ do. Two cases need a nudge:
   OLLAMA_ORIGINS='http://localhost:5173' ollama serve   # or your built origin
   ```
 
-  **Settings → Providers → Scan for local servers** probes the usual ports
-  (Ollama, LM Studio, llama.cpp, Jan, vLLM, LocalAI, text-generation-webui) and
-  adds whatever answers. A runtime that is running but refuses browser origins
-  will not answer, so a miss usually means CORS rather than "not installed".
-
 - **Anthropic** needs an opt-in header for direct browser use; the app sends
   `anthropic-dangerous-direct-browser-access` for you. Note that any key used
   from a browser is visible to anyone with access to that browser.
+
+**Settings → Providers → Scan for local servers** probes the usual ports
+(Ollama, LM Studio, llama.cpp, Jan, vLLM, LocalAI, text-generation-webui) and
+adds whatever answers. A runtime that is running but refuses browser origins
+will not answer, so a miss usually means CORS rather than "not installed".
+
+#### The bridge
+
+Configuring every runtime one at a time gets old, and some cannot be configured
+at all. **Settings → Connection** offers the other way round: a small daemon on
+your machine that forwards the call for you and answers with the CORS headers
+the browser wants.
+
+```sh
+nilgai-bridge                 # listens on 127.0.0.1:8787
+```
+
+Then **Settings → Connection → Look for the bridge**. Once it answers, provider
+calls travel through it — including the local scan above, which then finds
+runtimes that would otherwise stay invisible. The switch turns it off again.
+
+It is off until you turn it on, it keeps nothing, and it only accepts pages from
+an origin allowlist, so a site you happen to visit cannot use it to reach your
+network. The daemon, the desktop app and the mobile app all live in
+[nilgai-app](https://github.com/0xcrypto/nilgai-app); the app builds carry the
+same bridge inside them, so there is nothing to set up there at all.
 
 ## Keys and encryption
 
@@ -153,6 +176,7 @@ the keys.
   `Esc` closes the drawer or pops a sheet screen.
 - **Local runtimes** are seeded by default (Ollama, LM Studio) and marked
   `local` in settings.
+- **Connection** (Settings) is where the CORS bridge lives — see [CORS](#cors).
 
 ## Layout
 
@@ -165,6 +189,7 @@ src/ui.js                 DOM helpers + the bottom-sheet navigation stack
 src/store.js              IndexedDB: conversations, messages, key/value
 src/vault.js              API key storage and the optional passphrase vault
 src/providers.js          OpenAI / Anthropic / Ollama adapters, SSE + ndjson
+src/bridge.js             the optional CORS bridge: probing it, routing via it
 src/markdown.js           escape-first Markdown renderer (no third-party lib)
 src/styles/theme.css      IBM Plex, the neutral palette, the 44px touch scale
 src/styles/app.css        the app shell: drawer, thread, composer, sheets

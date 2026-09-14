@@ -9,15 +9,16 @@
 import * as store from './store.js';
 import * as vault from './vault.js';
 import * as api from './providers.js';
+import * as bridge from './bridge.js';
 import {
   el, toast, openSheet, pushScreen, popScreen, closeSheet, refreshSheet,
   confirmAction, promptText, chooseFromList, askScreen, downloadJSON,
 } from './ui.js';
 
-let app;                                   // bridge back to the chat shell
+let app;                                   // the chat shell's own API
 
-export function openSettings(bridge) {
-  app = bridge;
+export function openSettings(shell) {
+  app = shell;
   openSheet({ title: 'Settings', render: rootScreen });
 }
 
@@ -76,8 +77,8 @@ const field = (label, control, note) => el('div', { class: 'field' }, [
 
 /* ── first run ─────────────────────────────────────────────── */
 
-export function openIntro(bridge) {
-  if (bridge) app = bridge;
+export function openIntro(shell) {
+  if (shell) app = shell;
   openSheet({ title: 'Welcome to NilgAI UI ✨', render: introScreen });
 }
 
@@ -128,6 +129,11 @@ function rootScreen() {
           : 'None yet — add one to start',
         onclick: () => pushScreen({ title: 'Providers', render: providersScreen }),
       }),
+      navRow('Connection', {
+        sub: bridge.describe(),
+        dot: bridge.ready(),
+        onclick: () => pushScreen({ title: 'Connection', render: connectionScreen }),
+      }),
       navRow('Appearance', {
         sub: `${app.getUI().theme} theme`,
         onclick: () => pushScreen({ title: 'Appearance', render: appearanceScreen }),
@@ -152,7 +158,9 @@ function providersScreen() {
         sub: 'Ollama, LM Studio, llama.cpp, Jan, vLLM…',
         onclick: scanLocal,
       }),
-    ], 'Nothing you type reaches the network when you use a local model.'),
+    ], bridge.ready()
+      ? 'Probed through the bridge, so a runtime that refuses browser origins still shows up.'
+      : 'A runtime that refuses browser origins will not answer. Settings → Connection fixes that.'),
 
     group('Configured', providers.length
       ? providers.map(p => navRow(p.name, {
@@ -394,6 +402,183 @@ async function pickModelFor(provider) {
   await app.saveProviders();
   app.refreshChrome();
   refreshSheet();
+}
+
+/* ── connection ────────────────────────────────────────────── */
+
+const BRIDGE_HELP = 'https://github.com/0xcrypto/nilgai-app#the-bridge';
+
+/**
+ * The CORS bridge.
+ *
+ * Framed as a connection setting rather than a provider one because it is not
+ * about any single endpoint: it changes how every provider call leaves this
+ * page. The screen therefore has to be honest about that, and about the fact
+ * that turning it on means trusting a second program on this machine.
+ */
+function connectionScreen() {
+  const s = bridge.status();
+
+  if (s.builtIn) {
+    return el('div', {}, [
+      group('CORS bridge', [
+        actionRow('Built into this app', {
+          sub: s.reachable ? `Running on ${s.url}` : 'Not answering — restart the app',
+        }),
+      ], 'The desktop and mobile app carries its own bridge, so every provider ' +
+         'is reachable and there is nothing to set up.'),
+    ]);
+  }
+
+  const toggle = async on => {
+    if (!on) {
+      await bridge.disable();
+      refreshSheet();
+      return;
+    }
+    try {
+      await bridge.enable({ url: s.url || bridge.DEFAULT_URL, token: s.token });
+      toast('Bridge on', 'ok');
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+    refreshSheet();
+  };
+
+  const rows = [
+    switchRow('Use the bridge', s.enabled, toggle),
+    navRow('Address', {
+      value: s.url || bridge.DEFAULT_URL,
+      onclick: async () => {
+        const next = await promptText({
+          title: 'Bridge address',
+          value: s.url || bridge.DEFAULT_URL,
+          placeholder: bridge.DEFAULT_URL,
+        });
+        if (next === null) return;
+        const after = await bridge.configure({ url: next.trim() });
+        if (after.enabled && !after.ready) toast('Saved, but nothing answered there', 'err');
+        refreshSheet();
+      },
+    }),
+    navRow('Token', {
+      value: s.token ? 'Set' : 'None',
+      sub: 'Only if the bridge was started with --token',
+      onclick: async () => {
+        const next = await promptText({
+          title: 'Bridge token',
+          value: s.token,
+          placeholder: 'Leave empty for none',
+        });
+        if (next === null) return;
+        await bridge.configure({ token: next.trim() });
+        refreshSheet();
+      },
+    }),
+    actionRow('Look for the bridge', {
+      sub: 'Checks the usual address on this machine',
+      onclick: lookForBridge,
+    }),
+    s.enabled ? actionRow('Check again', { onclick: recheckBridge }) : null,
+  ];
+
+  return el('div', {}, [
+    group('CORS bridge', rows, statusNote(s)),
+
+    group('What this is', [
+      actionRow('Why you might need it', {
+        sub: 'Ollama, llama.cpp and anything else that refuses browser origins',
+        onclick: () => pushScreen({ title: 'About the bridge', render: bridgeAboutScreen }),
+      }),
+      linkRow('Get the bridge', BRIDGE_HELP, 'One small binary, or the full app'),
+    ]),
+  ]);
+}
+
+/** The line under the switch: what is true right now, and what to do about it. */
+function statusNote(s) {
+  if (!s.enabled) {
+    return 'Off. Provider calls go straight from this page, which only works ' +
+      'for endpoints that allow browser origins.';
+  }
+  if (!s.reachable) {
+    return `Nothing answered at ${s.url}. Start it with \`nilgai-bridge\`, or ` +
+      'turn this off to go direct again.';
+  }
+  if (!s.health.originAllowed) {
+    return `The bridge is running but does not accept ${location.origin}. ` +
+      `Restart it with --allow-origin ${location.origin}.`;
+  }
+  if (s.outdated) {
+    return `The bridge speaks protocol ${s.health.protocol} and this app speaks ` +
+      `${bridge.PROTOCOL}. Update whichever is older.`;
+  }
+  return `On. Provider calls go via ${s.url}, which is on this machine. ` +
+    `Bridge ${s.health.version}.`;
+}
+
+async function lookForBridge() {
+  const busy = toast('Looking on this machine…', '', 8000);
+  const hit = await bridge.detect();
+  busy.remove();
+
+  if (!hit) {
+    toast('No bridge answered. Is it running?', 'err');
+    refreshSheet();
+    return;
+  }
+  if (!hit.health.originAllowed) {
+    toast(`Found a bridge at ${hit.url}, but it refuses ${location.origin}`, 'err');
+    refreshSheet();
+    return;
+  }
+  try {
+    await bridge.enable({ url: hit.url });
+    toast(`Bridge found at ${hit.url}`, 'ok');
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+  refreshSheet();
+}
+
+async function recheckBridge() {
+  const s = await bridge.verify();
+  toast(s.ready ? 'Bridge is answering' : 'Bridge did not answer', s.ready ? 'ok' : 'err');
+  refreshSheet();
+}
+
+function bridgeAboutScreen() {
+  const point = (title, body) => el('div', { class: 'intro-point' }, [
+    el('div', { class: 'intro-title', text: title }),
+    el('p', { class: 'intro-body', text: body }),
+  ]);
+
+  return el('div', {}, [
+    el('div', { class: 'intro' }, [
+      point('A browser rule, not an endpoint problem',
+        'A page may only call a server that says it accepts pages. Ollama does ' +
+        'not by default, and neither do plenty of local runtimes and private ' +
+        'proxies. They are running fine — the browser simply will not let this ' +
+        'page speak to them.'),
+      point('The bridge is a program on your machine',
+        'It listens on loopback and forwards the call for you, then streams the ' +
+        'answer back. It never stores anything, and your key goes to the same ' +
+        'endpoint it would have gone to anyway.'),
+      point('It only answers pages you allow',
+        'By default that is this app and anything on localhost. A browser sets ' +
+        'the origin itself and a page cannot fake it, so a site you happen to ' +
+        'visit cannot borrow the bridge to reach your network.'),
+      point('Or install the app instead',
+        'The desktop and mobile builds carry the same bridge inside them, so ' +
+        'there is nothing to run and nothing to switch on.'),
+    ]),
+    el('div', { class: 'sheet-actions' }, [
+      el('a', {
+        class: 'btn btn-secondary btn-block', href: BRIDGE_HELP,
+        target: '_blank', rel: 'noopener noreferrer', text: 'How to get it',
+      }),
+    ]),
+  ]);
 }
 
 /* ── appearance ────────────────────────────────────────────── */

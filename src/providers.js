@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 0xcrypto
 
-/* Provider adapters. Every request here goes straight from the browser to the
-   endpoint configured by the user — there is no server in between. */
+/* Provider adapters. Every request here goes from the browser to the endpoint
+   the user configured, and nowhere else.
+
+   The one detour is the CORS bridge (./bridge.js): when it is switched on, the
+   URL is rewritten to travel via a daemon on this machine. That is still the
+   user's endpoint and the user's key — it is how you reach a server that will
+   not answer a browser directly. `bridge.apply` is a no-op while it is off. */
+
+import * as bridge from './bridge.js';
 
 export const PRESETS = [
   // Local runtimes first: nothing typed into these ever leaves the machine.
@@ -97,18 +104,31 @@ export class ProviderError extends Error {
 function networkHint(provider, err) {
   const local = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/i.test(provider.baseUrl);
   const mixed = location.protocol === 'https:' && provider.baseUrl.startsWith('http:');
+  const via = bridge.ready();
+
+  // Through the bridge the browser never sees the endpoint, so none of the
+  // browser-imposed reasons below apply and repeating them would mislead.
+  if (via) {
+    return `The bridge could not reach ${provider.baseUrl}. ${err?.message || ''}`.trim();
+  }
+  // Everything past here is the browser refusing, not the endpoint failing —
+  // so the bridge is the fix, and it is worth saying so every time.
+  const offer = ' Settings → Connection turns on the CORS bridge, which reaches ' +
+    'endpoints the browser will not.';
+
   if (mixed && !local) {
-    return 'Blocked: this page is HTTPS and the endpoint is plain HTTP.';
+    return `Blocked: this page is HTTPS and the endpoint is plain HTTP.${offer}`;
   }
   if (provider.kind === 'ollama') {
-    return `Could not reach ${provider.baseUrl}. Is Ollama running, and started with ` +
-      `OLLAMA_ORIGINS='${location.origin}'?`;
+    return `Could not reach ${provider.baseUrl}. Either start Ollama with ` +
+      `OLLAMA_ORIGINS='${location.origin}', or use the bridge ` +
+      '(Settings → Connection).';
   }
   if (local) {
     return `Could not reach ${provider.baseUrl}. Is it running, and does it allow ` +
-      `requests from ${location.origin}?`;
+      `requests from ${location.origin}?${offer}`;
   }
-  return `Network or CORS failure calling ${provider.baseUrl}. ${err?.message || ''}`.trim();
+  return `Network or CORS failure calling ${provider.baseUrl}. ${err?.message || ''}`.trim() + offer;
 }
 
 async function readError(res) {
@@ -191,9 +211,11 @@ export async function listModels(provider, apiKey, signal) {
     : provider.kind === 'anthropic' ? `${base}/v1/models?limit=1000`
     : `${base}/models`;
 
+  const [endpoint, headers] = bridge.apply(url, headersFor(provider, apiKey));
+
   let res;
   try {
-    res = await fetch(url, { method: 'GET', headers: headersFor(provider, apiKey), signal });
+    res = await fetch(endpoint, { method: 'GET', headers, signal });
   } catch (err) {
     if (err.name === 'AbortError') throw err;
     throw new ProviderError(networkHint(provider, err), { cause: err });
@@ -259,11 +281,13 @@ export async function streamChat({ provider, apiKey, model, system, messages, te
     };
   }
 
+  const [endpoint, headers] = bridge.apply(url, headersFor(provider, apiKey));
+
   let res;
   try {
-    res = await fetch(url, {
+    res = await fetch(endpoint, {
       method: 'POST',
-      headers: headersFor(provider, apiKey),
+      headers,
       body: JSON.stringify(body),
       signal,
       referrerPolicy: 'no-referrer',

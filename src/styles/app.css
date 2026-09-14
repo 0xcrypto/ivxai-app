@@ -354,10 +354,13 @@ body {
 }
 .composer-input::placeholder { color: var(--bs-tertiary-color); }
 
+/* Matches the one-line height of .composer-input exactly. The row aligns to
+   flex-end so the button stays at the bottom as the textarea grows, which
+   means any size below that height would hang the difference above it. */
 .send-btn {
   flex: 0 0 auto;
   display: grid; place-items: center;
-  width: 2.25rem; height: 2.25rem;
+  width: var(--tap); height: var(--tap);
   border: 0; border-radius: 50%;
   background-color: var(--n-invert-bg); color: var(--n-invert-fg);
   font-size: 1rem; line-height: 1;
@@ -414,10 +417,12 @@ body {
   font-size: 1.0625rem; font-weight: 600; text-align: center;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* Keeps the title optically centred when only one side has a button. */
-.sheet-head .icon-btn[hidden] { display: none; }
-.sheet-head::before,
-.sheet-head::after { content: ''; }
+/* Hidden head buttons keep their slot so the title stays centred. */
+.sheet-head .icon-btn[hidden] {
+  display: inline-grid;
+  visibility: hidden;
+  pointer-events: none;
+}
 
 .sheet-body {
   flex: 1 1 auto;

@@ -5,7 +5,11 @@
 
    This worker only ever touches same-origin GET requests for the app's own
    files. Provider API calls (different origin, and POSTs) fall straight
-   through to the network — they are never cached, inspected or rewritten. */
+   through to the network — they are never cached, inspected or rewritten.
+
+   The /proxy exception below matters when the CORS bridge is also serving the
+   app: then it and the page share an origin, and a model list is a same-origin
+   GET that would otherwise be answered from the shell cache. */
 
 /* VERSION and SHELL are stamped in by the sw-precache plugin in
    vite.config.js, so the cache name changes whenever any asset does. */
@@ -61,6 +65,7 @@ self.addEventListener('fetch', event => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;      // provider traffic: hands off
+  if (url.pathname === '/proxy') return;                // bridge traffic: likewise
 
   // The document is network first, so a redeploy is picked up on the next
   // load rather than a load after that.
