@@ -169,8 +169,17 @@ export async function verify() {
 
 /* ── using it ──────────────────────────────────────────────── */
 
-/** On, reachable, and willing to serve this origin. */
+/**
+ * On, reachable, and willing to serve this origin.
+ *
+ * A built-in bridge skips the check. The app started that server itself, so
+ * waiting for a probe to come back would send every call made in the first
+ * moments straight at the provider — which is the one thing that cannot work
+ * in a webview. If it really is broken, a bridge error says so; silently
+ * falling back to a route we know is blocked would not.
+ */
 export function ready() {
+  if (state.builtIn) return true;
   return Boolean(state.enabled && state.health?.ok && state.health.originAllowed);
 }
 
