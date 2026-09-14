@@ -47,6 +47,33 @@ export function toast(message, kind = '', ms = 4000) {
   return item;
 }
 
+/**
+ * A snack that waits for an answer instead of timing out.
+ *
+ * toast() is for things you only need to notice; this is for the one case
+ * where something is being asked of you. It carries an action and stays put
+ * until you take it or dismiss it, because a notice that disappears on its
+ * own is a notice that gets missed — which is exactly how the old "reload to
+ * use it" message failed.
+ */
+export function actionSnack(message, actionLabel, { onAction, onDismiss } = {}) {
+  const stack = $('#snacks');
+  const item = el('div', { class: 'snack snack-ask', role: 'status' }, [
+    el('span', { class: 'snack-ask-text', text: message }),
+    el('button', {
+      class: 'snack-ask-go', type: 'button', text: actionLabel,
+      onclick: () => onAction?.(),
+    }),
+    el('button', {
+      class: 'snack-ask-x', type: 'button', text: '\u00d7',
+      'aria-label': 'Dismiss',
+      onclick: () => { item.remove(); onDismiss?.(); },
+    }),
+  ]);
+  stack.append(item);
+  return { close: () => item.remove() };
+}
+
 /* ── sheet stack ───────────────────────────────────────────── */
 
 let host, sheet, sheetBody, sheetTitle, sheetBack;

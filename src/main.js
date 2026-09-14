@@ -24,9 +24,9 @@ import * as vault from './vault.js';
 import * as api from './providers.js';
 import * as bridge from './bridge.js';
 import { renderMarkdown } from './markdown.js';
-import { openSettings, openIntro } from './settings.js';
+import { openSettings, openIntro, openDisclaimer } from './settings.js';
 import {
-  $, el, clear, toast, initSheet, openSheet, pushScreen, closeSheet, refreshSheet,
+  $, el, clear, toast, actionSnack, initSheet, openSheet, pushScreen, closeSheet, refreshSheet,
   confirmAction, promptText, copyText, downloadJSON, downloadBlob, groupLabel, autosize,
   searchBar,
 } from './ui.js';
@@ -67,7 +67,6 @@ async function boot() {
     stop: $('#btnStop'),
     chip: $('#modelChip'),
     chipText: $('#chipText'),
-    status: $('#statusLine'),
     jump: $('#jump'),
   });
 
@@ -116,20 +115,66 @@ async function greetOnFirstVisit() {
   return true;
 }
 
+/* The browser only refetches sw.js on a navigation, or about once a day. This
+   is an app people leave open for days, so left alone a tab can sit on a build
+   that shipped a week ago and never know. Ask on a timer, and whenever the tab
+   comes back to the front. */
+const UPDATE_CHECK_MS = 60 * 60 * 1000;
+
+/**
+ * Offer the new version, and apply it only when asked.
+ *
+ * The worker installs the new shell and then stops (see public/sw.js), so
+ * nothing about the running page changes until the button below is pressed.
+ * That press is also what makes the reload reliable: the page waits for the
+ * new worker to actually take over before reloading, where pressing the
+ * browser's own refresh could just as easily reload the old shell again.
+ */
 function registerServiceWorker() {
   // Skipped in dev: the precache manifest is stamped in at build time, and a
   // caching worker in front of the dev server only causes confusion.
   if (!import.meta.env.PROD) return;
   if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
   navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).then(reg => {
+    let notice = null;
+    let declined = false;
+
+    const offer = worker => {
+      if (!worker || notice || declined) return;
+      notice = actionSnack('A new version is ready', 'Update', {
+        onAction: () => {
+          notice?.close();
+          notice = null;
+          // Reload once the new worker is in charge, not before: reloading
+          // first would be served by the old one and change nothing.
+          navigator.serviceWorker.addEventListener(
+            'controllerchange', () => location.reload(), { once: true },
+          );
+          worker.postMessage('skip-waiting');
+        },
+        // Dismissing means dismissed. It is offered again on the next visit,
+        // which is soon enough for something that is not urgent.
+        onDismiss: () => { notice = null; declined = true; },
+      });
+    };
+
+    // Installed on an earlier visit and still waiting to be let in.
+    offer(reg.waiting);
+
     reg.addEventListener('updatefound', () => {
       const installing = reg.installing;
       installing?.addEventListener('statechange', () => {
+        // No controller means this is a first install, not an update: there is
+        // nothing being replaced and nothing to ask about.
         if (installing.state === 'installed' && navigator.serviceWorker.controller) {
-          toast('A new version is ready — reload to use it', '', 9000);
+          offer(installing);
         }
       });
     });
+
+    const check = () => { if (navigator.onLine) reg.update().catch(() => {}); };
+    setInterval(check, UPDATE_CHECK_MS);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
   }).catch(() => { /* offline support is a nicety; the app works without it */ });
 }
 
@@ -473,7 +518,6 @@ async function runCompletion() {
     });
   };
 
-  const started = performance.now();
   try {
     const result = await api.streamChat({
       provider,
@@ -492,15 +536,11 @@ async function runCompletion() {
     });
     assistant.content = result.text || assistant.content;
     assistant.usage = result.usage;
-    const secs = ((performance.now() - started) / 1000).toFixed(1);
-    dom.status.textContent = `${model} · ${secs}s`;
   } catch (err) {
     if (err.name === 'AbortError') {
       assistant.stopped = true;
-      dom.status.textContent = 'Stopped';
     } else {
       assistant.error = err.message || String(err);
-      dom.status.textContent = '';
       toast(assistant.error, 'err', 9000);
     }
   } finally {
@@ -941,6 +981,7 @@ function bindEvents() {
   $('#btnNewChat').addEventListener('click', () => { startDraft(); closeDrawer(); dom.input.focus(); });
   $('#btnChatMenu').addEventListener('click', openChatMenu);
   $('#btnSettings').addEventListener('click', () => { closeDrawer(); openSettings(shell); });
+  $('#btnDisclaimer').addEventListener('click', () => openDisclaimer());
   dom.chip.addEventListener('click', openModelPicker);
   $('#btnJump').addEventListener('click', scrollToBottom);
 

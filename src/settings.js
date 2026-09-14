@@ -75,6 +75,44 @@ const field = (label, control, note) => el('div', { class: 'field' }, [
   note ? el('div', { class: 'field-note', text: note }) : null,
 ]);
 
+/* ── disclaimer ────────────────────────────────────────────── */
+
+/* The footer has room for one line, and this does not fit in one line. So the
+   footer carries the short version and this carries the whole of it, broken
+   into the four things it actually says. */
+export function openDisclaimer() {
+  openSheet({ title: 'Disclaimer', render: disclaimerScreen });
+}
+
+function disclaimerScreen() {
+  const point = (title, body) => el('div', { class: 'intro-point' }, [
+    el('div', { class: 'intro-title', text: title }),
+    el('p', { class: 'intro-body', text: body }),
+  ]);
+
+  return el('div', {}, [
+    el('div', { class: 'intro' }, [
+      point('AI may be wrong',
+        'AI may generate inaccurate or false information.'),
+      point('We do not provide the models',
+        'This tool is a chat interface only; we do not provide the AI models.'),
+      point('Your data never reaches us',
+        'Your data is never stored or processed by us. This interface runs ' +
+        'entirely in your browser and connects directly to your specified CORS ' +
+        'proxy. Chat processing is handled by the server hosting your chosen model.'),
+      point('Prefer self-hosted models',
+        'We do not endorse closed-source models and recommend using self-hosted ' +
+        'models whenever possible.'),
+    ]),
+    el('div', { class: 'sheet-actions' }, [
+      el('button', {
+        class: 'btn btn-primary btn-block', type: 'button', text: 'Got it',
+        onclick: () => closeSheet(),
+      }),
+    ]),
+  ]);
+}
+
 /* ── first run ─────────────────────────────────────────────── */
 
 export function openIntro(shell) {

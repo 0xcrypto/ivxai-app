@@ -19,13 +19,20 @@ const CACHE = `ivx-shell-${VERSION}`;
 const SHELL = __PRECACHE_MANIFEST__;
 
 
+/* Installing does NOT activate. A new worker sits in `waiting` until the page
+   sends 'skip-waiting' below, because activate() deletes every other cache —
+   including the one the currently open page is still running from. Taking that
+   away underneath a live tab leaves it with a new worker and an old UI, which
+   is the half-updated state that made "reload to update" unreliable.
+
+   A very first install has no worker to replace, so it activates immediately
+   regardless of this; only genuine updates wait. */
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE)
       // addAll is atomic: one 404 would throw away the whole install, so add
       // entries individually and let a single failure be survivable.
       .then(cache => Promise.all(SHELL.map(url => cache.add(url).catch(() => {}))))
-      .then(() => self.skipWaiting())
   );
 });
 
@@ -37,6 +44,9 @@ self.addEventListener('activate', event => {
   );
 });
 
+/* The page asking to be updated. Activating claims the clients, which fires
+   `controllerchange` there and is the page's cue that a reload will now get
+   the new shell rather than the old one again. */
 self.addEventListener('message', event => {
   if (event.data === 'skip-waiting') self.skipWaiting();
 });

@@ -368,11 +368,23 @@ body {
 .send-btn:disabled { opacity: .35; }
 .send-stop { background-color: var(--bs-danger); color: var(--n-danger-contrast); font-size: .75rem; }
 
+/* A standing notice rather than a per-response readout: the model, token count
+   and whether it was stopped already sit on each message, and this is the one
+   thing worth saying on every screen. The long version is a tap away. */
 .status {
   margin: .375rem auto 0;
-  min-height: 1rem;
-  font-size: .75rem; color: var(--bs-tertiary-color); text-align: center;
+  max-width: 68ch;
+  font-size: .6875rem; line-height: 1.45;
+  color: var(--bs-tertiary-color); text-align: center;
+  text-wrap: pretty;
 }
+.status-link {
+  padding: 0; border: 0; background: none;
+  font: inherit; color: inherit;
+  text-decoration: underline; text-underline-offset: .15em;
+  cursor: pointer;
+}
+.status-link:hover { color: var(--bs-secondary-color); }
 
 /* ── Bottom sheet ──────────────────────────────────────────── */
 
@@ -537,6 +549,26 @@ a.item { text-decoration: none; color: var(--bs-body-color); }
   animation: snack-in .2s ease;
 }
 .snack.err { background-color: var(--bs-danger); color: var(--n-danger-contrast); }
+
+/* The update snack: text, the action, and a way out of it. */
+.snack-ask { display: flex; align-items: center; gap: .75rem; }
+.snack-ask-text { flex: 1 1 auto; }
+.snack-ask-go {
+  flex: 0 0 auto;
+  padding: .3125rem .75rem;
+  border: 0; border-radius: .5rem;
+  background-color: var(--n-invert-fg); color: var(--n-invert-bg);
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+.snack-ask-go:hover { opacity: .85; }
+.snack-ask-x {
+  flex: 0 0 auto;
+  width: 1.5rem; height: 1.5rem; padding: 0;
+  border: 0; border-radius: .375rem;
+  background: none; color: inherit;
+  font-size: 1.125rem; line-height: 1; cursor: pointer; opacity: .6;
+}
+.snack-ask-x:hover { opacity: 1; }
 @keyframes snack-in { from { opacity: 0; transform: translateY(.5rem); } }
 
 /* ── Wider screens ─────────────────────────────────────────── */
