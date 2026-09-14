@@ -12,7 +12,7 @@ import * as api from './providers.js';
 import * as bridge from './bridge.js';
 import {
   el, toast, openSheet, pushScreen, popScreen, closeSheet, refreshSheet,
-  confirmAction, promptText, chooseFromList, askScreen, downloadJSON,
+  confirmAction, promptText, chooseFromList, askScreen, downloadJSON, searchBar,
 } from './ui.js';
 
 let app;                                   // the chat shell's own API
@@ -373,10 +373,12 @@ export function chooseModel(provider, selected, title = 'Model') {
       done(name);
     };
 
-    return el('div', {}, [
-      models.length ? el('div', { class: 'group' }, [
+    const content = el('div', {}, [
+      models.length ? el('div', { class: 'group', dataset: { searchGroup: '' } }, [
         el('div', { class: 'item-list' }, models.map(m => el('button', {
-          class: `item${m === selected ? ' is-active' : ''}`, type: 'button', onclick: () => done(m),
+          class: `item${m === selected ? ' is-active' : ''}`, type: 'button',
+          dataset: { search: m.toLowerCase() },
+          onclick: () => done(m),
         }, [
           el('span', { class: 'item-main' }, [el('span', { class: 'item-title', text: m })]),
           el('span', { class: 'item-check', text: m === selected ? '✓' : '' }),
@@ -392,6 +394,8 @@ export function chooseModel(provider, selected, title = 'Model') {
       ], models.length ? null : 'No list yet. Fetch it, or just type the name — ' +
         'some endpoints do not publish one.'),
     ]);
+
+    return el('div', {}, [searchBar(content, { placeholder: 'Search models' }), content]);
   });
 }
 

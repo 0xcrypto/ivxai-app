@@ -86,12 +86,23 @@ function paint(direction = 'in') {
   const screen = stack[stack.length - 1];
   sheetTitle.textContent = screen.title || '';
   sheetBack.hidden = stack.length < 2;
+
+  // 'none' means we are re-rendering the screen the user is already looking at,
+  // so their place in it has to survive. Fetching a model list from a row
+  // halfway down otherwise scrolled the answer off the top of the sheet, which
+  // read as "nothing happened". A push or a pop is a different screen and
+  // rightly starts at the top.
+  const inPlace = direction === 'none';
+  const scroll = inPlace ? sheetBody.scrollTop : 0;
+
   clear(sheetBody);
   const node = screen.render();
   node.classList.add('screen');
+  // Sliding content in that never went anywhere just adds to the confusion.
+  if (inPlace) node.classList.add('still');
   if (direction === 'back') node.classList.add('back');
   sheetBody.append(node);
-  sheetBody.scrollTop = 0;
+  sheetBody.scrollTop = scroll;
   const target = node.querySelector('[data-autofocus]');
   if (target) requestAnimationFrame(() => target.focus());
 }
@@ -229,6 +240,70 @@ export function chooseFromList({ title, items, selected }) {
     ]),
     el('span', { class: 'item-check', text: item.value === selected ? '✓' : '' }),
   ]))));
+}
+
+/* ── filtering a long list ─────────────────────────────────── */
+
+/**
+ * A search field that filters rows already on the screen.
+ *
+ * Hand it the content you are about to render; rows opt in by carrying
+ * `data-search` with the text to match, and a container marked
+ * `data-search-group` disappears once nothing in it matches. Returns null when
+ * there is too little to be worth searching, so a caller can drop it straight
+ * into a children array.
+ *
+ * It filters by hiding nodes rather than by re-rendering. paint() rebuilds the
+ * sheet body from nothing, so going through refreshSheet on every keystroke
+ * would destroy the input and take the focus — and a phone's keyboard — with
+ * it. Deliberately not autofocused for the same reason: a picker that opens
+ * the keyboard over the list it is meant to show helps nobody.
+ */
+export function searchBar(content, { placeholder = 'Search', minRows = 8 } = {}) {
+  const rows = () => $$('[data-search]', content);
+  if (rows().length < minRows) return null;
+
+  const empty = el('p', { class: 'group-note', hidden: true });
+  const input = el('input', {
+    class: 'form-control', type: 'search', placeholder,
+    autocomplete: 'off', spellcheck: false, 'aria-label': placeholder,
+  });
+
+  const apply = () => {
+    const query = input.value.trim().toLowerCase();
+    let hits = 0;
+    for (const row of rows()) {
+      const match = !query || row.dataset.search.includes(query);
+      row.hidden = !match;
+      if (match) hits += 1;
+    }
+    for (const group of $$('[data-search-group]', content)) {
+      group.hidden = Boolean(query) && !$$('[data-search]', group).some(row => !row.hidden);
+    }
+    // `:last-child` counts hidden rows, so the last one still on screen has to
+    // be told to drop its divider — otherwise it draws against the list's edge.
+    for (const list of $$('.item-list', content)) {
+      const items = $$('.item', list);
+      items.forEach(item => item.classList.remove('is-last'));
+      items.filter(item => !item.hidden).pop()?.classList.add('is-last');
+    }
+    empty.hidden = !query || hits > 0;
+    empty.textContent = `Nothing matches “${input.value.trim()}”`;
+  };
+
+  input.addEventListener('input', apply);
+  // A search input's own clear button fires `search`, not `input`, in Safari.
+  input.addEventListener('search', apply);
+  // Escape empties the field before the sheet's own handler reads it as "go
+  // back" — losing the whole screen because you wanted the list again is rude.
+  input.addEventListener('keydown', ev => {
+    if (ev.key !== 'Escape' || !input.value) return;
+    ev.stopPropagation();
+    input.value = '';
+    apply();
+  });
+
+  return el('div', { class: 'sheet-search' }, [input, empty]);
 }
 
 /* ── misc ──────────────────────────────────────────────────── */

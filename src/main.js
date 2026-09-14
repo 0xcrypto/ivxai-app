@@ -28,6 +28,7 @@ import { openSettings, openIntro } from './settings.js';
 import {
   $, el, clear, toast, initSheet, openSheet, pushScreen, closeSheet, refreshSheet,
   confirmAction, promptText, copyText, downloadJSON, downloadBlob, groupLabel, autosize,
+  searchBar,
 } from './ui.js';
 
 const DEFAULTS = {
@@ -619,6 +620,8 @@ function modelScreen() {
     const rows = models.map(model => el('button', {
       class: `item${isCurrent(model) ? ' is-active' : ''}`,
       type: 'button',
+      // Matched against the provider name too, so "ollama" narrows to one group.
+      dataset: { search: `${model} ${provider.name}`.toLowerCase() },
       onclick: () => useModel(provider, model),
     }, [
       el('span', { class: 'item-main' }, [el('span', { class: 'item-title', text: model })]),
@@ -650,7 +653,7 @@ function modelScreen() {
     }
 
     const problem = listErrors.get(provider.id);
-    blocks.push(el('div', { class: 'group' }, [
+    blocks.push(el('div', { class: 'group', dataset: { searchGroup: '' } }, [
       el('div', { class: 'group-label' }, [
         provider.name,
         api.isLocalUrl(provider.baseUrl) ? ' · local' : '',
@@ -674,7 +677,10 @@ function modelScreen() {
     ]),
   ]));
 
-  return el('div', {}, blocks);
+  // Several providers with a few hundred models between them is normal, and
+  // scrolling that is not a way to find anything.
+  const content = el('div', {}, blocks);
+  return el('div', {}, [searchBar(content, { placeholder: 'Search models' }), content]);
 }
 
 function openChatMenu() {
