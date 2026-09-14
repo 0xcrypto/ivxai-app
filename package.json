@@ -1,5 +1,5 @@
 {
-  "name": "nilgai-ui",
+  "name": "ivx-ai-chat",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -8,9 +8,9 @@
   "author": "0xcrypto (https://eval.blog)",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xcrypto/nilgai.git"
+    "url": "git+https://github.com/ivxlabs/chat.git"
   },
-  "homepage": "https://0xcrypto.github.io/nilgai/",
+  "homepage": "https://ai.ivx.run/chat",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

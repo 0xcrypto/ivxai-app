@@ -31,7 +31,7 @@ function serviceWorkerPrecache() {
   };
 
   return {
-    name: 'nilgai:sw-precache',
+    name: 'ivx:sw-precache',
     apply: 'build',
     configResolved(config) {
       outDir = config.build.outDir;
@@ -78,16 +78,16 @@ function serviceWorkerPrecache() {
  * are prepended here after the bundle is written.
  */
 function licenceNotices() {
-  const js = '/*! NilgAI UI | GPL-3.0-or-later | Copyright (C) 2026 0xcrypto\n' +
-    ' * Source: https://github.com/0xcrypto/nilgai */\n';
-  const css = '/*! NilgAI UI | GPL-3.0-or-later | Copyright (C) 2026 0xcrypto\n' +
-    ' * Source: https://github.com/0xcrypto/nilgai\n' +
+  const js = '/*! ivx AI Chat | GPL-3.0-or-later | Copyright (C) 2026 0xcrypto\n' +
+    ' * Source: https://github.com/ivxlabs/chat */\n';
+  const css = '/*! ivx AI Chat | GPL-3.0-or-later | Copyright (C) 2026 0xcrypto\n' +
+    ' * Source: https://github.com/ivxlabs/chat\n' +
     ' * Bundles Halfmoon CSS v2.0.2 (MIT, Copyright (c) 2023 Tahmid Khan)\n' +
     ' * and IBM Plex (SIL Open Font License 1.1, Copyright IBM Corp.) */\n';
 
   let outDir = 'dist';
   return {
-    name: 'nilgai:licence-notices',
+    name: 'ivx:licence-notices',
     apply: 'build',
     configResolved(config) { outDir = config.build.outDir; },
     async closeBundle() {

@@ -1,4 +1,4 @@
-# NilgAI UI
+# ivx AI Chat
 
 A chat client that runs entirely in your browser. No backend, no accounts, no
 analytics. Point it at a model running on your own machine, or bring an API key
@@ -54,7 +54,7 @@ publishes to GitHub Pages from `main`.
 
 One-time setup: **Settings → Pages → Build and deployment → Source: GitHub
 Actions**. Nothing else to configure — `base: './'` means the build works from
-a repository subpath, so `https://0xcrypto.github.io/nilgai/` needs no special
+a repository subpath, so `https://ai.ivx.run/chat` needs no special
 casing, and the service worker scope and manifest `start_url` follow it.
 
 The build job fails the run on two things that would otherwise ship quietly:
@@ -68,9 +68,9 @@ To check a build locally the way Pages serves it:
 
 ```sh
 npm run build
-mkdir -p /tmp/pages/nilgai && cp -R dist/* /tmp/pages/nilgai/
+mkdir -p /tmp/pages/chat && cp -R dist/* /tmp/pages/chat/
 cd /tmp/pages && python3 -m http.server 8125
-# http://localhost:8125/nilgai/
+# http://localhost:8125/chat/
 ```
 
 ## Setting up a provider
@@ -132,7 +132,7 @@ your machine that forwards the call for you and answers with the CORS headers
 the browser wants.
 
 ```sh
-nilgai-bridge                 # listens on 127.0.0.1:8787
+ivx-bridge                 # listens on 127.0.0.1:8787
 ```
 
 Then **Settings → CORS bypass → Look for the bridge**. Once it answers, provider
@@ -142,7 +142,7 @@ runtimes that would otherwise stay invisible. The switch turns it off again.
 It is off until you turn it on, it keeps nothing, and it only accepts pages from
 an origin allowlist, so a site you happen to visit cannot use it to reach your
 network. The daemon, the desktop app and the mobile app all live in
-[nilgai-app](https://github.com/0xcrypto/nilgai-app); the app builds carry the
+[ivxai-app](https://github.com/ivxlabs/ivxai-app); the app builds carry the
 same bridge inside them, so there is nothing to set up there at all.
 
 ## Keys and encryption
@@ -171,7 +171,7 @@ the keys.
 - **Search** matches chat titles and message text.
 - **First run** opens a short welcome sheet explaining what the app is. It
   records `welcomeSeenAt` in IndexedDB so it appears once; **Settings → About →
-  What is NilgAI UI?** brings it back.
+  What is ivx AI Chat?** brings it back.
 - **Shortcuts**: `Enter` sends (configurable), `Shift+Enter` for a newline,
   `Esc` closes the drawer or pops a sheet screen.
 - **Local runtimes** are seeded by default (Ollama, LM Studio) and marked
@@ -269,9 +269,19 @@ rather than overriding hundreds of derived variables. The one exception to the
 monochrome rule is a muted red for destructive actions — without it "Erase
 everything" looks identical to "Export".
 
+## Supporting it
+
+ivx AI Chat is part of [ivx](https://github.com/ivxlabs)' effort to strip
+trackers and advertising out of privacy-critical infrastructure, and to make
+open-weight models a practical default rather than a curiosity. There is no ad
+revenue, no telemetry and no paid tier behind it.
+
+- [Sponsor the project](https://github.com/sponsors/0xcrypto)
+- [Star it on GitHub](https://github.com/ivxlabs/chat) — it is how other people find it
+
 ## Licence
 
-NilgAI UI is free software under the **GNU General Public License v3.0 or
+ivx AI Chat is free software under the **GNU General Public License v3.0 or
 later** — see [LICENSE](LICENSE). You may use, study, share and modify it; if
 you distribute a modified version, it has to carry the same licence and its
 source has to be available. Because the app is delivered to a browser, the

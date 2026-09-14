@@ -79,7 +79,7 @@ const field = (label, control, note) => el('div', { class: 'field' }, [
 
 export function openIntro(shell) {
   if (shell) app = shell;
-  openSheet({ title: 'Welcome to NilgAI UI ✨', render: introScreen });
+  openSheet({ title: 'Welcome to ivx AI Chat ✨', render: introScreen });
 }
 
 function introScreen() {
@@ -410,7 +410,7 @@ async function pickModelFor(provider) {
 
 /* ── CORS bypass ───────────────────────────────────────────── */
 
-const BRIDGE_HELP = 'https://github.com/0xcrypto/nilgai-app#the-bridge';
+const BRIDGE_HELP = 'https://github.com/ivxlabs/ivxai-app#the-bridge';
 
 /**
  * The CORS bridge.
@@ -506,7 +506,7 @@ function statusNote(s) {
       'for endpoints that allow browser origins.';
   }
   if (!s.reachable) {
-    return `Nothing answered at ${s.url}. Start it with \`nilgai-bridge\`, or ` +
+    return `Nothing answered at ${s.url}. Start it with \`ivx-bridge\`, or ` +
       'turn this off to go direct again.';
   }
   if (!s.health.originAllowed) {
@@ -693,8 +693,8 @@ async function exportAll(withKeys) {
       kv.push({ key: 'secrets', value: vault.exportSecrets() });
     } catch (err) { toast(err.message, 'err'); return; }
   }
-  downloadJSON(`nilgai-ui-backup-${new Date().toISOString().slice(0, 10)}.json`, {
-    app: 'nilgai-ui', version: 1, exportedAt: new Date().toISOString(),
+  downloadJSON(`ivx-ai-chat-backup-${new Date().toISOString().slice(0, 10)}.json`, {
+    app: 'ivx-ai-chat', version: 1, exportedAt: new Date().toISOString(),
     containsKeys: withKeys,
     conversations: await store.listConversations(),
     messages: await store.allMessages(),
@@ -774,9 +774,28 @@ const version = (key, licence) => {
   return v ? `v${v} · ${licence}` : licence;
 };
 
+/* The whole point of the project is that nobody pays for it with their
+   attention or their data, which leaves exactly one way to fund it. */
+const SPONSOR_URL = 'https://github.com/sponsors/0xcrypto';
+const SOURCE_URL = 'https://github.com/ivxlabs/chat';
+
+const bigLink = (href, text, kind) => el('a', {
+  class: `btn btn-${kind} btn-block`, href, target: '_blank', rel: 'noopener noreferrer', text,
+});
+
 function aboutScreen() {
   const para = text => el('p', { class: 'group-note', text });
   return el('div', {}, [
+    el('div', { class: 'sheet-actions' }, [
+      bigLink(SPONSOR_URL, '♥  Sponsor this project', 'primary'),
+      bigLink(SOURCE_URL, '★  Star it on GitHub', 'secondary'),
+    ]),
+    el('div', { class: 'group' }, [
+      para('No ads, no trackers, no accounts and no paid tier. If it is useful ' +
+           'to you, sponsoring keeps it that way — and a star helps other people ' +
+           'find it.'),
+    ]),
+
     group('Created by @0xcrypto', [
       linkRow('X', 'https://x.com/0xcrypto', 'x.com/0xcrypto'),
       linkRow('LinkedIn', 'https://linkedin.com/in/0xcrypto', 'linkedin.com/in/0xcrypto'),
@@ -791,20 +810,20 @@ function aboutScreen() {
            'and model lists, sent straight to the endpoint you configured.'),
     ]),
     group(null, [
-      actionRow('What is NilgAI UI?', { sub: 'The welcome tour', onclick: () => openIntro() }),
+      actionRow('What is ivx AI Chat?', { sub: 'The welcome tour', onclick: () => openIntro() }),
     ]),
 
     // Free software: the people running it should be able to find the source
     // and the terms without leaving the app.
     group('This app', [
-      linkRow('Source code', 'https://github.com/0xcrypto/nilgai', 'github.com/0xcrypto/nilgai'),
+      linkRow('Source code', SOURCE_URL, 'github.com/ivxlabs/chat'),
       linkRow('Licence', 'https://www.gnu.org/licenses/gpl-3.0.html', 'GNU GPL v3 or later'),
     ], 'Free software: you may use, study, share and change it, provided your ' +
        'changes carry the same licence.'),
 
     group('Where your data lives', [
-      actionRow('IndexedDB · nilgai', { sub: 'Conversations, messages, providers, API keys' }),
-      actionRow('localStorage · nilgai.ui', { sub: 'Theme and layout preferences' }),
+      actionRow('IndexedDB · ivx', { sub: 'Conversations, messages, providers, API keys' }),
+      actionRow('localStorage · ivx.ui', { sub: 'Theme and layout preferences' }),
       actionRow('Cache Storage', { sub: 'The app shell, so it runs offline' }),
     ]),
     el('div', { class: 'group' }, [

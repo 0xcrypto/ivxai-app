@@ -1,6 +1,6 @@
 {
-  "name": "NilgAI UI — local AI chat",
-  "short_name": "NilgAI UI",
+  "name": "ivx AI Chat — private, local-first AI chat",
+  "short_name": "ivx AI Chat",
   "description": "A private, offline-first AI chat client. Keys and conversations stay in your browser.",
   "start_url": "./index.html",
   "scope": "./",

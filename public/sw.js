@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 0xcrypto
 
-/* Offline shell for NilgAI UI.
+/* Offline shell for ivx AI Chat.
 
    This worker only ever touches same-origin GET requests for the app's own
    files. Provider API calls (different origin, and POSTs) fall straight
@@ -14,7 +14,7 @@
 /* VERSION and SHELL are stamped in by the sw-precache plugin in
    vite.config.js, so the cache name changes whenever any asset does. */
 const VERSION = '__CACHE_VERSION__';
-const CACHE = `nilgai-shell-${VERSION}`;
+const CACHE = `ivx-shell-${VERSION}`;
 
 const SHELL = __PRECACHE_MANIFEST__;
 

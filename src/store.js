@@ -4,9 +4,9 @@
 /* Persistence. Everything lives in this browser: IndexedDB for content,
    localStorage for a handful of UI preferences. Nothing is ever uploaded. */
 
-const DB_NAME = 'nilgai';
+const DB_NAME = 'ivx';
 const DB_VERSION = 1;
-const UI_KEY = 'nilgai.ui';
+const UI_KEY = 'ivx.ui';
 
 let dbp = null;
 

@@ -15,8 +15,8 @@
    configured — one extra hop, over loopback, on your own computer.
 
    In the desktop and mobile app the same server runs inside the app process
-   and announces itself on `window.__NILGAI_BRIDGE__`, so there is nothing to
-   install and nothing to turn on. See github.com/0xcrypto/nilgai-app. */
+   and announces itself on `window.__IVX_BRIDGE__`, so there is nothing to
+   install and nothing to turn on. See github.com/ivxlabs/ivxai-app. */
 
 import { kvGet, kvSet } from './store.js';
 
@@ -63,7 +63,7 @@ export async function probe(url, { timeoutMs = 2500 } = {}) {
     });
     if (!res.ok) throw new Error(`The bridge answered ${res.status}`);
     const json = await res.json();
-    if (json?.name !== 'nilgai-bridge') throw new Error('Something else is on that port');
+    if (json?.name !== 'ivx-bridge') throw new Error('Something else is on that port');
     return json;
   } finally {
     clearTimeout(timer);
@@ -93,7 +93,7 @@ export async function detect({ extra = [] } = {}) {
  * to find out whether the bridge is actually there.
  */
 export async function init() {
-  const injected = globalThis.__NILGAI_BRIDGE__;
+  const injected = globalThis.__IVX_BRIDGE__;
   if (injected?.url) {
     Object.assign(state, {
       builtIn: true,
@@ -205,7 +205,7 @@ export function status() {
 export function apply(url, headers = {}) {
   if (!ready()) return [url, headers];
   const via = `${state.url}/proxy?url=${encodeURIComponent(url)}`;
-  return [via, state.token ? { ...headers, 'X-NilgAI-Token': state.token } : headers];
+  return [via, state.token ? { ...headers, 'X-Ivx-Token': state.token } : headers];
 }
 
 /** One line for a settings row. */
