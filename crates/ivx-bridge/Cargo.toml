@@ -2,8 +2,8 @@
 # Copyright (C) 2026 0xcrypto
 
 [package]
-name = "nilgai-bridge"
-description = "A loopback CORS bridge for NilgAI UI: forwards browser calls to any LLM endpoint."
+name = "ivx-bridge"
+description = "A loopback CORS bridge for ivx AI Chat: forwards browser calls to any LLM endpoint."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,11 +11,11 @@ authors.workspace = true
 repository.workspace = true
 
 [lib]
-name = "nilgai_bridge"
+name = "ivx_bridge"
 path = "src/lib.rs"
 
 [[bin]]
-name = "nilgai-bridge"
+name = "ivx-bridge"
 path = "src/main.rs"
 required-features = ["cli"]
 

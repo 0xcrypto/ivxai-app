@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 0xcrypto
 
-//! Optionally serving a built copy of NilgAI UI (`--ui-dir dist`).
+//! Optionally serving a built copy of ivx AI Chat (`--ui-dir dist`).
 //!
 //! Not the point of the bridge, but it removes a class of problem rather than
 //! documenting around it: served from here, the page and the bridge are the

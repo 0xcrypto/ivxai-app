@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 0xcrypto
 
-//! The NilgAI bridge: a loopback HTTP server that answers preflights so a
-//! browser will let NilgAI UI talk to endpoints that do not send CORS headers
+//! The ivx AI Chat bridge: a loopback HTTP server that answers preflights so
+//! a browser will let the app talk to endpoints that do not send CORS headers
 //! of their own — Ollama on its default settings, a bare llama.cpp build, an
 //! internal proxy someone set up years ago.
 //!
@@ -17,11 +17,11 @@
 //! identical path through the UI.
 //!
 //! ```no_run
-//! # async fn run() -> Result<(), nilgai_bridge::BoxError> {
+//! # async fn run() -> Result<(), ivx_bridge::BoxError> {
 //! use std::sync::Arc;
 //! let listener = tokio::net::TcpListener::bind("127.0.0.1:8787").await?;
-//! let state = Arc::new(nilgai_bridge::State::new(nilgai_bridge::Config::default())?);
-//! nilgai_bridge::serve(listener, state).await?;
+//! let state = Arc::new(ivx_bridge::State::new(ivx_bridge::Config::default())?);
+//! ivx_bridge::serve(listener, state).await?;
 //! # Ok(()) }
 //! ```
 
@@ -59,9 +59,9 @@ pub const DEFAULT_PORT: u16 = 8787;
 
 pub struct Config {
     pub origins: OriginPolicy,
-    /// When set, `/proxy` requires it as `?token=` or `X-NilgAI-Token`.
+    /// When set, `/proxy` requires it as `?token=` or `X-Ivx-Token`.
     pub token: Option<String>,
-    /// Serve a built copy of NilgAI UI from this directory.
+    /// Serve a built copy of ivx AI Chat from this directory.
     ///
     /// Worth doing on Safari, which — unlike Chrome and Firefox — still counts
     /// `http://127.0.0.1` as mixed content when the page itself came over
@@ -100,7 +100,7 @@ impl State {
             // No overall timeout on purpose: a streamed completion is a single
             // response that can legitimately stay open for many minutes.
             .danger_accept_invalid_certs(config.insecure)
-            .user_agent(format!("nilgai-bridge/{VERSION}"))
+            .user_agent(format!("ivx-bridge/{VERSION}"))
             .build()?;
         Ok(Self { config, client })
     }
@@ -156,7 +156,7 @@ async fn route(state: Arc<State>, req: Request<Incoming>) -> Result<Response<Bod
         .map(str::to_owned);
     let origin = origin.as_deref();
     let path = req.uri().path().to_owned();
-    let is_health = path == "/health" || path == "/__nilgai/health";
+    let is_health = path == "/health" || path == "/__ivx/health";
 
     if req.method() == Method::OPTIONS {
         // `/health` answers everyone: a page that cannot read it cannot tell
@@ -215,7 +215,7 @@ fn health(state: &State, origin: Option<&str>) -> Response<Body> {
     state.log(&format!("health from {}", origin.unwrap_or("-")));
     let body = format!(
         concat!(
-            r#"{{"ok":true,"name":"nilgai-bridge","version":"{}","protocol":{},"#,
+            r#"{{"ok":true,"name":"ivx-bridge","version":"{}","protocol":{},"#,
             r#""originAllowed":{},"needsToken":{},"servesUi":{}}}"#
         ),
         VERSION,

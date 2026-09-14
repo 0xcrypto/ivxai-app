@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 0xcrypto
 
-//! NilgAI as an installed app.
+//! ivx AI Chat as an installed app.
 //!
-//! The webview is the same NilgAI UI that runs on the web — `web/` is a
+//! The webview is the same ivx AI Chat that runs on the web — `web/` is a
 //! submodule, and this crate adds nothing to the page. What it adds is a
-//! [`nilgai_bridge`] server running in-process on an ephemeral loopback port,
+//! [`ivx_bridge`] server running in-process on an ephemeral loopback port,
 //! which is how the app escapes CORS: providers that refuse a browser origin
 //! are reached through the bridge instead.
 //!
@@ -18,7 +18,7 @@
 
 use std::sync::Arc;
 
-use nilgai_bridge::{Config, State};
+use ivx_bridge::{Config, State};
 
 /// Handed to the page so it can find the bridge without probing for it.
 ///
@@ -29,7 +29,7 @@ fn init_script(port: u16, token: &str) -> String {
     // Both values are ours: a u16 and hex from the system RNG. Nothing here
     // comes from the page or the network.
     format!(
-        r#"Object.defineProperty(window, "__NILGAI_BRIDGE__", {{
+        r#"Object.defineProperty(window, "__IVX_BRIDGE__", {{
   value: Object.freeze({{ url: "http://127.0.0.1:{port}", token: "{token}", source: "app" }}),
   writable: false, configurable: false
 }});"#
@@ -67,7 +67,7 @@ fn fit_to_screen(window: &tauri::WebviewWindow) -> tauri::Result<()> {
 /// Carries the script to every webview, including the ones declared in
 /// `tauri.conf.json` — a plugin is the only hook that reaches those.
 fn bridge_plugin<R: tauri::Runtime>(script: String) -> tauri::plugin::TauriPlugin<R> {
-    tauri::plugin::Builder::<R, ()>::new("nilgai-bridge")
+    tauri::plugin::Builder::<R, ()>::new("ivx-bridge")
         .js_init_script(script)
         .build()
 }
@@ -83,7 +83,7 @@ pub fn run() {
         .local_addr()
         .expect("a bound listener has an address")
         .port();
-    let token = nilgai_bridge::random_token();
+    let token = ivx_bridge::random_token();
 
     let bridge_token = token.clone();
     tauri::Builder::default()
@@ -103,10 +103,10 @@ pub fn run() {
                 // The port is ephemeral but still reachable by anything on this
                 // machine, so the token is what ties it to this webview.
                 token: Some(bridge_token),
-                // NILGAI_VERBOSE=1 turns the request log on in a shipped build.
+                // IVX_VERBOSE=1 turns the request log on in a shipped build.
                 // Without it there is no way to see what the webview is asking
                 // for, and a release app is exactly where that goes wrong.
-                verbose: cfg!(debug_assertions) || std::env::var_os("NILGAI_VERBOSE").is_some(),
+                verbose: cfg!(debug_assertions) || std::env::var_os("IVX_VERBOSE").is_some(),
                 ..Config::default()
             };
             let state = Arc::new(
@@ -120,17 +120,17 @@ pub fn run() {
                 // thread before any runtime is entered.
                 let listener = match tokio::net::TcpListener::from_std(listener) {
                     Ok(listener) => listener,
-                    Err(err) => return eprintln!("nilgai: bridge could not start: {err}"),
+                    Err(err) => return eprintln!("ivx: bridge could not start: {err}"),
                 };
-                if let Err(err) = nilgai_bridge::serve(listener, state).await {
+                if let Err(err) = ivx_bridge::serve(listener, state).await {
                     // Losing the bridge is not fatal: providers that send their
                     // own CORS headers keep working, and the UI reports the
                     // bridge as unavailable rather than pretending otherwise.
-                    eprintln!("nilgai: bridge stopped: {err}");
+                    eprintln!("ivx: bridge stopped: {err}");
                 }
             });
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running NilgAI");
+        .expect("error while running ivx AI Chat");
 }

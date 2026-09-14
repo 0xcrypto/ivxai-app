@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 0xcrypto
 
-//! `nilgai-bridge` — the standalone daemon.
+//! `ivx-bridge` — the standalone daemon.
 //!
 //! This is the whole "you do not have to install an app" path: one binary,
 //! a few megabytes, no window, no runtime. Install it, leave it running, and
-//! the hosted NilgAI UI can reach endpoints that would otherwise refuse a
+//! the hosted ivx AI Chat can reach endpoints that would otherwise refuse a
 //! browser.
 //!
 //! Argument parsing is by hand. A dependency for it would be larger than the
@@ -16,13 +16,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use nilgai_bridge::{cors, BoxError, Config, OriginPolicy, OriginRule, State, DEFAULT_PORT};
+use ivx_bridge::{cors, BoxError, Config, OriginPolicy, OriginRule, State, DEFAULT_PORT};
 
 const USAGE: &str = "\
-nilgai-bridge — let a browser reach endpoints that do not speak CORS
+ivx-bridge — let a browser reach endpoints that do not speak CORS
 
 USAGE
-  nilgai-bridge [options]
+  ivx-bridge [options]
 
 OPTIONS
   -p, --port <port>        Port to listen on (default 8787)
@@ -31,8 +31,8 @@ OPTIONS
       --only-origin <o>    Accept only the origins given this way (repeatable)
       --allow-any-origin   Accept every origin. Development only
       --token <secret>     Require this token on /proxy, as ?token= or
-                           X-NilgAI-Token. For shared machines
-      --ui-dir <dir>       Also serve a built copy of NilgAI UI from here.
+                           X-Ivx-Token. For shared machines
+      --ui-dir <dir>       Also serve a built copy of ivx AI Chat from here.
                            Needed on Safari, which blocks http://127.0.0.1
                            from an HTTPS page
       --insecure           Do not verify TLS upstream. Local self-signed
@@ -46,7 +46,7 @@ OPTIONS
   -h, --help               This text
   -V, --version            Version
 
-BY DEFAULT it accepts https://o.eval.blog, https://0xcrypto.github.io, any
+BY DEFAULT it accepts https://ai.ivx.run, https://o.eval.blog, any
 loopback origin, and the Tauri webview origins. Anything else is refused: the
 browser sets Origin and a page cannot forge it, so that list is what stops a
 site you happen to visit from using the bridge to reach your own network.
@@ -99,7 +99,7 @@ fn parse_args() -> Result<Option<Args>, BoxError> {
                 return Ok(None);
             }
             "-V" | "--version" => {
-                println!("nilgai-bridge {}", nilgai_bridge::VERSION);
+                println!("ivx-bridge {}", ivx_bridge::VERSION);
                 return Ok(None);
             }
             "-p" | "--port" => args.port = value()?.parse()?,
@@ -146,7 +146,7 @@ fn policy(args: &Args) -> OriginPolicy {
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     if let Err(err) = run().await {
-        eprintln!("nilgai-bridge: {err}");
+        eprintln!("ivx-bridge: {err}");
         std::process::exit(1);
     }
 }
@@ -174,13 +174,13 @@ async fn run() -> Result<(), BoxError> {
     }
     if args.any_origin {
         eprintln!(
-            "nilgai-bridge: --allow-any-origin means any page in your browser can use this \
+            "ivx-bridge: --allow-any-origin means any page in your browser can use this \
              bridge to reach your network. Development only."
         );
     }
     if !args.host.is_loopback() && args.token.is_none() {
         eprintln!(
-            "nilgai-bridge: binding {} exposes the bridge beyond this machine. Use --token \
+            "ivx-bridge: binding {} exposes the bridge beyond this machine. Use --token \
              unless you are certain.",
             args.host
         );
@@ -204,19 +204,21 @@ async fn run() -> Result<(), BoxError> {
         }
     })?;
 
-    println!("nilgai-bridge {} on http://{addr}", nilgai_bridge::VERSION);
+    println!("ivx-bridge {} on http://{addr}", ivx_bridge::VERSION);
     println!("  accepting: {}", config.origins.describe());
     if config.token.is_some() {
         println!("  token:     required");
     }
     match &config.ui_dir {
         Some(dir) => println!("  serving:   {} — open http://{addr}/", dir.display()),
-        None => println!("  connect:   NilgAI UI -> Settings -> Connection -> Look for the bridge"),
+        None => {
+            println!("  connect:   ivx AI Chat -> Settings -> CORS bypass -> Look for the bridge")
+        }
     }
 
     let state = Arc::new(State::new(config)?);
     tokio::select! {
-        result = nilgai_bridge::serve(listener, state) => result,
+        result = ivx_bridge::serve(listener, state) => result,
         _ = tokio::signal::ctrl_c() => {
             println!("\nstopped");
             Ok(())
@@ -236,7 +238,7 @@ mod service {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     use std::process::Command;
 
-    const LABEL: &str = "blog.eval.nilgai.bridge";
+    const LABEL: &str = "run.ivx.bridge";
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn home() -> Result<PathBuf, BoxError> {
@@ -302,8 +304,8 @@ mod service {
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>{log}/nilgai-bridge.log</string>
-  <key>StandardErrorPath</key><string>{log}/nilgai-bridge.log</string>
+  <key>StandardOutPath</key><string>{log}/ivx-bridge.log</string>
+  <key>StandardErrorPath</key><string>{log}/ivx-bridge.log</string>
 </dict>
 </plist>
 "#,
@@ -321,7 +323,7 @@ mod service {
         run("launchctl", &["bootstrap", target.as_str(), plist.as_str()])?;
 
         println!("Installed {}", path.display());
-        println!("Logs: {}/nilgai-bridge.log", logs.display());
+        println!("Logs: {}/ivx-bridge.log", logs.display());
         println!("Running now, and again at every login.");
         Ok(())
     }
@@ -358,7 +360,7 @@ mod service {
 
     #[cfg(target_os = "linux")]
     fn unit_path() -> Result<PathBuf, BoxError> {
-        Ok(home()?.join(".config/systemd/user/nilgai-bridge.service"))
+        Ok(home()?.join(".config/systemd/user/ivx-bridge.service"))
     }
 
     #[cfg(target_os = "linux")]
@@ -376,8 +378,8 @@ mod service {
             &path,
             format!(
                 "[Unit]\n\
-                 Description=NilgAI bridge\n\
-                 Documentation=https://github.com/0xcrypto/nilgai-app\n\
+                 Description=ivx AI Chat bridge\n\
+                 Documentation=https://github.com/ivxlabs/ivxai-app\n\
                  After=network-online.target\n\
                  \n[Service]\n\
                  ExecStart={command}\n\
@@ -389,9 +391,9 @@ mod service {
         )?;
 
         run("systemctl", &["--user", "daemon-reload"])?;
-        run("systemctl", &["--user", "enable", "--now", "nilgai-bridge"])?;
+        run("systemctl", &["--user", "enable", "--now", "ivx-bridge"])?;
         println!("Installed {}", path.display());
-        println!("Logs: journalctl --user -u nilgai-bridge -f");
+        println!("Logs: journalctl --user -u ivx-bridge -f");
         Ok(())
     }
 
@@ -400,7 +402,7 @@ mod service {
         let path = unit_path()?;
         let _ = run(
             "systemctl",
-            &["--user", "disable", "--now", "nilgai-bridge"],
+            &["--user", "disable", "--now", "ivx-bridge"],
         );
         if path.exists() {
             std::fs::remove_file(&path)?;
@@ -423,8 +425,8 @@ mod service {
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     fn unsupported() -> BoxError {
         "--install-service only knows launchd and systemd. On Windows, run \
-         `schtasks /create /tn NilgAIBridge /sc onlogon /tr \"<path to \
-         nilgai-bridge.exe>\"`, or drop a shortcut in shell:startup."
+         `schtasks /create /tn IvxAiBridge /sc onlogon /tr \"<path to \
+         ivx-bridge.exe>\"`, or drop a shortcut in shell:startup."
             .into()
     }
 }

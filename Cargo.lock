@@ -1674,6 +1674,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "ivx-app"
+version = "0.1.0"
+dependencies = [
+ "ivx-bridge",
+ "tauri",
+ "tauri-build",
+ "tokio",
+]
+
+[[package]]
+name = "ivx-bridge"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "getrandom 0.4.3",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "reqwest",
+ "tokio",
+]
+
+[[package]]
 name = "javascriptcore-rs"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2103,30 +2127,6 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
-
-[[package]]
-name = "nilgai-app"
-version = "0.1.0"
-dependencies = [
- "nilgai-bridge",
- "tauri",
- "tauri-build",
- "tokio",
-]
-
-[[package]]
-name = "nilgai-bridge"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "futures-util",
- "getrandom 0.4.3",
- "http-body-util",
- "hyper",
- "hyper-util",
- "reqwest",
- "tokio",
-]
 
 [[package]]
 name = "num-conv"

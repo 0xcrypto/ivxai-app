@@ -46,7 +46,7 @@ const STRIP_REQUEST: &[&str] = &[
     "sec-fetch-site",
     "sec-fetch-dest",
     "sec-fetch-user",
-    "x-nilgai-token",
+    "x-ivx-token",
 ];
 
 /// Framing belongs to the connection we are about to write, not the one we
@@ -102,7 +102,7 @@ fn token_matches(expected: &str, given: Option<&str>) -> bool {
 fn presented_token(req: &Request<Incoming>) -> Option<String> {
     if let Some(v) = req
         .headers()
-        .get("x-nilgai-token")
+        .get("x-ivx-token")
         .and_then(|v| v.to_str().ok())
     {
         return Some(v.to_string());
@@ -121,7 +121,7 @@ pub async fn handle(state: &State, req: Request<Incoming>, origin: Option<&str>)
             return json_error(
                 state,
                 StatusCode::UNAUTHORIZED,
-                "This bridge was started with --token; pass it as ?token= or X-NilgAI-Token.",
+                "This bridge was started with --token; pass it as ?token= or X-Ivx-Token.",
                 origin,
             );
         }

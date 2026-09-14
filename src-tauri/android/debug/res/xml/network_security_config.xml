@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-License-Identifier: GPL-3.0-or-later
+  Copyright (C) 2026 0xcrypto
+
+  Debug builds override the release config with the permissive one Tauri
+  already gives them (android:usesCleartextTraffic="true"). `tauri android dev`
+  serves the page from a cleartext dev server on the host machine's address,
+  which the loopback-only release config would refuse.
+
+  A network security config wins over usesCleartextTraffic on API 24+, so the
+  release file would otherwise apply to debug builds too.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

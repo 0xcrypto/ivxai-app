@@ -27,9 +27,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
         if: matrix.os == 'ubuntu-latest'
-      - run: cargo clippy -p nilgai-bridge --all-targets -- -D warnings
-      - run: cargo test -p nilgai-bridge
-      - run: cargo build --release -p nilgai-bridge
+      - run: cargo clippy -p ivx-bridge --all-targets -- -D warnings
+      - run: cargo test -p ivx-bridge
+      - run: cargo build --release -p ivx-bridge
 
   app:
     name: desktop app

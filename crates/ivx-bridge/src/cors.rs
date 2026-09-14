@@ -33,11 +33,14 @@ pub enum OriginPolicy {
     List(Vec<OriginRule>),
 }
 
-/// Where NilgAI UI is normally served from, plus the origins a webview uses.
+/// Where ivx AI Chat is normally served from, plus the origins a webview uses.
 pub fn default_rules() -> Vec<OriginRule> {
     [
+        "https://ai.ivx.run",
+        // Where the app was hosted before ivx.run, and a Pages deploy of the
+        // repository. Both are ours; anything else needs --allow-origin.
         "https://o.eval.blog",
-        "https://0xcrypto.github.io",
+        "https://ivxlabs.github.io",
         // Tauri v2 webviews: custom scheme on Apple platforms, http elsewhere.
         "tauri://localhost",
         "http://tauri.localhost",
@@ -102,7 +105,7 @@ impl OriginPolicy {
 
 const EXPOSED: &str = "*";
 const DEFAULT_REQUEST_HEADERS: &str = "authorization, content-type, x-api-key, anthropic-version, \
-     anthropic-dangerous-direct-browser-access, x-nilgai-token";
+     anthropic-dangerous-direct-browser-access, x-ivx-token";
 
 /// Add the headers that let `origin` read this response.
 ///
@@ -180,11 +183,13 @@ mod tests {
     #[test]
     fn default_policy_allows_the_hosted_app_and_rejects_strangers() {
         let policy = OriginPolicy::List(default_rules());
+        assert!(policy.allows(Some("https://ai.ivx.run")));
         assert!(policy.allows(Some("https://o.eval.blog")));
-        assert!(policy.allows(Some("https://0xcrypto.github.io")));
+        assert!(policy.allows(Some("https://ivxlabs.github.io")));
         assert!(policy.allows(Some("tauri://localhost")));
         assert!(policy.allows(Some("http://localhost:5173")));
         assert!(!policy.allows(Some("https://evil.example")));
+        assert!(!policy.allows(Some("https://ai.ivx.run.evil.example")));
         assert!(!policy.allows(Some("https://o.eval.blog.evil.example")));
     }
 

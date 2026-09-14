@@ -39,7 +39,7 @@ jobs:
 
             | You want | Download |
             | --- | --- |
-            | Just the CORS bypass, no app | `nilgai-bridge-*` for your platform |
+            | Just the CORS bypass, no app | `ivx-bridge-*` for your platform |
             | macOS | `*-macos-universal.dmg`, or the `.app.tar.gz` |
             | Windows | `*-windows-x86_64-setup.exe` |
             | Linux | `*.AppImage` or `*.deb` |
@@ -53,7 +53,7 @@ jobs:
 
             - **macOS** — Gatekeeper refuses it on first launch. Right-click the
               app and choose Open, or run
-              `xattr -dr com.apple.quarantine /Applications/NilgAI.app`.
+              `xattr -dr com.apple.quarantine "/Applications/ivx AI Chat.app"`.
             - **Windows** — SmartScreen shows "Windows protected your PC".
               More info → Run anyway.
             - **Android** — signed with the project's own key, so it installs
@@ -68,7 +68,7 @@ jobs:
             exit 0
           fi
           printf '%s' "$NOTES" > notes.md
-          gh release create "$TAG" --draft --title "NilgAI $TAG" --notes-file notes.md
+          gh release create "$TAG" --draft --title "ivx AI Chat $TAG" --notes-file notes.md
 
   bridge:
     name: bridge (${{ matrix.name }})
@@ -89,7 +89,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p nilgai-bridge --target ${{ matrix.target }}
+      - run: cargo build --release -p ivx-bridge --target ${{ matrix.target }}
 
       - name: Package and upload
         shell: bash
@@ -100,12 +100,12 @@ jobs:
           mkdir -p out
           cp README.md LICENSE out/
           if [ "${{ runner.os }}" = "Windows" ]; then
-            cp target/${{ matrix.target }}/release/nilgai-bridge.exe out/
+            cp target/${{ matrix.target }}/release/ivx-bridge.exe out/
           else
-            cp target/${{ matrix.target }}/release/nilgai-bridge out/
+            cp target/${{ matrix.target }}/release/ivx-bridge out/
           fi
-          tar -czf "nilgai-bridge-$TAG-${{ matrix.name }}.tar.gz" -C out .
-          gh release upload "$TAG" "nilgai-bridge-$TAG-${{ matrix.name }}.tar.gz" --clobber
+          tar -czf "ivx-bridge-$TAG-${{ matrix.name }}.tar.gz" -C out .
+          gh release upload "$TAG" "ivx-bridge-$TAG-${{ matrix.name }}.tar.gz" --clobber
 
   desktop:
     name: app (${{ matrix.name }})
@@ -146,14 +146,17 @@ jobs:
           BUNDLE=target/universal-apple-darwin/release/bundle
           npx tauri build --target universal-apple-darwin --bundles app
           mkdir -p dist
-          tar -C "$BUNDLE/macos" -czf "dist/NilgAI-$TAG-macos-universal.app.tar.gz" NilgAI.app
+          # productName has spaces in it, so take whatever .app was produced
+          # rather than hardcoding a name that drifts when the app is renamed.
+          APP=$(cd "$BUNDLE/macos" && ls -d *.app | head -1)
+          tar -C "$BUNDLE/macos" -czf "dist/ivx-ai-chat-$TAG-macos-universal.app.tar.gz" "$APP"
 
           # The .dmg step drives Finder over AppleScript to lay its window out,
           # which is the one part of a macOS bundle that can fail on a runner
           # with no desktop session. The .app above is the real deliverable, so
           # a dmg failure must not take the release down with it.
           if npx tauri build --target universal-apple-darwin --bundles dmg; then
-            cp "$BUNDLE"/dmg/*.dmg "dist/NilgAI-$TAG-macos-universal.dmg"
+            cp "$BUNDLE"/dmg/*.dmg "dist/ivx-ai-chat-$TAG-macos-universal.dmg"
           else
             echo "::warning::dmg bundling failed; shipping the .app only"
           fi
@@ -165,7 +168,7 @@ jobs:
           set -eu
           npx tauri build --bundles nsis
           mkdir -p dist
-          cp target/release/bundle/nsis/*-setup.exe "dist/NilgAI-$TAG-windows-x86_64-setup.exe"
+          cp target/release/bundle/nsis/*-setup.exe "dist/ivx-ai-chat-$TAG-windows-x86_64-setup.exe"
 
       - name: Build (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -173,8 +176,8 @@ jobs:
           set -eu
           npx tauri build --bundles appimage,deb
           mkdir -p dist
-          cp target/release/bundle/appimage/*.AppImage "dist/NilgAI-$TAG-linux-x86_64.AppImage"
-          cp target/release/bundle/deb/*.deb "dist/NilgAI-$TAG-linux-x86_64.deb"
+          cp target/release/bundle/appimage/*.AppImage "dist/ivx-ai-chat-$TAG-linux-x86_64.AppImage"
+          cp target/release/bundle/deb/*.deb "dist/ivx-ai-chat-$TAG-linux-x86_64.deb"
 
       - name: Upload
         shell: bash
@@ -213,8 +216,11 @@ jobs:
           echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
 
       - run: npm install
-      # gen/android is generated rather than committed, so it is made here.
+      # gen/android is generated rather than committed, so it is made here —
+      # and the overlay puts back what the template leaves out, without which
+      # the webview cannot reach the bridge. See scripts/android-overlay.mjs.
       - run: npx tauri android init --ci
+      - run: node scripts/android-overlay.mjs
       - run: npx tauri android build --apk
 
       - name: Sign
@@ -241,14 +247,14 @@ jobs:
             --ks-key-alias "$KEY_ALIAS" \
             --ks-pass "pass:$KEYSTORE_PASSWORD" \
             --key-pass "pass:$KEY_PASSWORD" \
-            --out "NilgAI-$TAG-android.apk" /tmp/aligned.apk
-          "$BT/apksigner" verify --verbose "NilgAI-$TAG-android.apk"
+            --out "ivx-ai-chat-$TAG-android.apk" /tmp/aligned.apk
+          "$BT/apksigner" verify --verbose "ivx-ai-chat-$TAG-android.apk"
           rm -f /tmp/keystore.jks /tmp/aligned.apk
 
       - name: Upload
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" "NilgAI-$TAG-android.apk" --clobber
+        run: gh release upload "$TAG" "ivx-ai-chat-$TAG-android.apk" --clobber
 
   ios:
     name: app (ios, unsigned)
@@ -293,5 +299,5 @@ jobs:
           test ! -f "$APP/embedded.mobileprovision"
           codesign -dv "$APP" 2>&1 | grep -q "not signed at all"
 
-          cp "$IPA" "NilgAI-$TAG-ios-unsigned.ipa"
-          gh release upload "$TAG" "NilgAI-$TAG-ios-unsigned.ipa" --clobber
+          cp "$IPA" "ivx-ai-chat-$TAG-ios-unsigned.ipa"
+          gh release upload "$TAG" "ivx-ai-chat-$TAG-ios-unsigned.ipa" --clobber

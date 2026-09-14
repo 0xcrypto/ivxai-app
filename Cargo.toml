@@ -3,14 +3,14 @@
 
 [workspace]
 resolver = "2"
-members = ["crates/nilgai-bridge", "src-tauri"]
+members = ["crates/ivx-bridge", "src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 authors = ["0xcrypto <https://eval.blog>"]
-repository = "https://github.com/0xcrypto/nilgai-app"
+repository = "https://github.com/ivxlabs/ivxai-app"
 
 # The bridge is meant to be a small thing you drop on a machine, and the Tauri
 # bundle is meant to be a small thing you download. Both want the same profile.
