@@ -129,10 +129,10 @@ function rootScreen() {
           : 'None yet — add one to start',
         onclick: () => pushScreen({ title: 'Providers', render: providersScreen }),
       }),
-      navRow('Connection', {
+      navRow('CORS bypass', {
         sub: bridge.describe(),
         dot: bridge.ready(),
-        onclick: () => pushScreen({ title: 'Connection', render: connectionScreen }),
+        onclick: () => pushScreen({ title: 'CORS bypass', render: corsBypassScreen }),
       }),
       navRow('Appearance', {
         sub: `${app.getUI().theme} theme`,
@@ -160,7 +160,7 @@ function providersScreen() {
       }),
     ], bridge.ready()
       ? 'Probed through the bridge, so a runtime that refuses browser origins still shows up.'
-      : 'A runtime that refuses browser origins will not answer. Settings → Connection fixes that.'),
+      : 'A runtime that refuses browser origins will not answer. Settings → CORS bypass fixes that.'),
 
     group('Configured', providers.length
       ? providers.map(p => navRow(p.name, {
@@ -408,7 +408,7 @@ async function pickModelFor(provider) {
   refreshSheet();
 }
 
-/* ── connection ────────────────────────────────────────────── */
+/* ── CORS bypass ───────────────────────────────────────────── */
 
 const BRIDGE_HELP = 'https://github.com/0xcrypto/nilgai-app#the-bridge';
 
@@ -420,7 +420,7 @@ const BRIDGE_HELP = 'https://github.com/0xcrypto/nilgai-app#the-bridge';
  * page. The screen therefore has to be honest about that, and about the fact
  * that turning it on means trusting a second program on this machine.
  */
-function connectionScreen() {
+function corsBypassScreen() {
   const s = bridge.status();
 
   if (s.builtIn) {

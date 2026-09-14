@@ -127,7 +127,7 @@ will not answer, so a miss usually means CORS rather than "not installed".
 #### The bridge
 
 Configuring every runtime one at a time gets old, and some cannot be configured
-at all. **Settings → Connection** offers the other way round: a small daemon on
+at all. **Settings → CORS bypass** offers the other way round: a small daemon on
 your machine that forwards the call for you and answers with the CORS headers
 the browser wants.
 
@@ -135,7 +135,7 @@ the browser wants.
 nilgai-bridge                 # listens on 127.0.0.1:8787
 ```
 
-Then **Settings → Connection → Look for the bridge**. Once it answers, provider
+Then **Settings → CORS bypass → Look for the bridge**. Once it answers, provider
 calls travel through it — including the local scan above, which then finds
 runtimes that would otherwise stay invisible. The switch turns it off again.
 
@@ -176,7 +176,7 @@ the keys.
   `Esc` closes the drawer or pops a sheet screen.
 - **Local runtimes** are seeded by default (Ollama, LM Studio) and marked
   `local` in settings.
-- **Connection** (Settings) is where the CORS bridge lives — see [CORS](#cors).
+- **CORS bypass** (Settings) is where the bridge lives — see [CORS](#cors).
 
 ## Layout
 

@@ -113,7 +113,7 @@ function networkHint(provider, err) {
   }
   // Everything past here is the browser refusing, not the endpoint failing —
   // so the bridge is the fix, and it is worth saying so every time.
-  const offer = ' Settings → Connection turns on the CORS bridge, which reaches ' +
+  const offer = ' Settings → CORS bypass turns on the bridge, which reaches ' +
     'endpoints the browser will not.';
 
   if (mixed && !local) {
@@ -122,7 +122,7 @@ function networkHint(provider, err) {
   if (provider.kind === 'ollama') {
     return `Could not reach ${provider.baseUrl}. Either start Ollama with ` +
       `OLLAMA_ORIGINS='${location.origin}', or use the bridge ` +
-      '(Settings → Connection).';
+      '(Settings → CORS bypass).';
   }
   if (local) {
     return `Could not reach ${provider.baseUrl}. Is it running, and does it allow ` +
