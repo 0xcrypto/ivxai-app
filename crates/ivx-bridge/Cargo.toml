@@ -3,7 +3,7 @@
 
 [package]
 name = "ivx-bridge"
-description = "A loopback CORS bridge for ivx AI Chat: forwards browser calls to any LLM endpoint."
+description = "A loopback CORS bridge for ivxai Chat: forwards browser calls to any LLM endpoint."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

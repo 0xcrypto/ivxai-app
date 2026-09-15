@@ -51,7 +51,7 @@ jobs:
 
             - **macOS** — Gatekeeper refuses it on first launch. Right-click the
               app and choose Open, or run
-              `xattr -dr com.apple.quarantine "/Applications/ivx AI Chat.app"`.
+              `xattr -dr com.apple.quarantine "/Applications/ivxai Chat.app"`.
             - **Windows** — SmartScreen shows "Windows protected your PC".
               More info → Run anyway.
         run: |
@@ -60,7 +60,7 @@ jobs:
             exit 0
           fi
           printf '%s' "$NOTES" > notes.md
-          gh release create "$TAG" --draft --title "ivx AI Chat $TAG" --notes-file notes.md
+          gh release create "$TAG" --draft --title "ivxai Chat $TAG" --notes-file notes.md
 
   build:
     name: ${{ matrix.name }}
@@ -82,6 +82,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - run: rustup target add ${{ matrix.rust_targets }}
       - uses: Swatinem/rust-cache@v2
@@ -91,7 +94,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf
-      - run: npm install
+      # Two explicit installs rather than letting the root postinstall run
+      # `npm --prefix web install`. That nests one npm inside another's
+      # lifecycle script, and on Windows the inner install fails while the outer
+      # still holds the tree open, so even the rollback dies with EPERM.
+      - run: npm ci --ignore-scripts
+      - run: npm ci
+        working-directory: web
 
       # Each platform stages its finished, correctly named files in dist/.
 
@@ -135,14 +144,14 @@ jobs:
           # productName has spaces in it, so take whatever .app was produced
           # rather than hardcoding a name that drifts when the app is renamed.
           APP=$(cd "$BUNDLE/macos" && ls -d *.app | head -1)
-          tar -C "$BUNDLE/macos" -czf "dist/ivx-ai-chat-$TAG-macos-universal.app.tar.gz" "$APP"
+          tar -C "$BUNDLE/macos" -czf "dist/ivxai-chat-$TAG-macos-universal.app.tar.gz" "$APP"
 
           # The .dmg step drives Finder over AppleScript to lay its window out,
           # which is the one part of a macOS bundle that can fail on a runner
           # with no desktop session. The .app above is the real deliverable, so
           # a dmg failure must not take the release down with it.
           if npx tauri build --target universal-apple-darwin --bundles dmg; then
-            cp "$BUNDLE"/dmg/*.dmg "dist/ivx-ai-chat-$TAG-macos-universal.dmg"
+            cp "$BUNDLE"/dmg/*.dmg "dist/ivxai-chat-$TAG-macos-universal.dmg"
           else
             echo "::warning::dmg bundling failed; shipping the .app only"
           fi
@@ -153,15 +162,15 @@ jobs:
         run: |
           set -eu
           npx tauri build --bundles nsis
-          cp target/release/bundle/nsis/*-setup.exe "dist/ivx-ai-chat-$TAG-windows-x86_64-setup.exe"
+          cp target/release/bundle/nsis/*-setup.exe "dist/ivxai-chat-$TAG-windows-x86_64-setup.exe"
 
       - name: App (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           set -eu
           npx tauri build --bundles appimage,deb
-          cp target/release/bundle/appimage/*.AppImage "dist/ivx-ai-chat-$TAG-linux-x86_64.AppImage"
-          cp target/release/bundle/deb/*.deb "dist/ivx-ai-chat-$TAG-linux-x86_64.deb"
+          cp target/release/bundle/appimage/*.AppImage "dist/ivxai-chat-$TAG-linux-x86_64.AppImage"
+          cp target/release/bundle/deb/*.deb "dist/ivxai-chat-$TAG-linux-x86_64.deb"
 
       - name: Upload
         shell: bash

@@ -1,9 +1,9 @@
 {
   "name": "ivxai-app",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
-  "description": "ivx AI Chat for desktop and mobile, plus the standalone CORS bridge.",
+  "description": "ivxai Chat for desktop and mobile, plus the standalone CORS bridge.",
   "license": "GPL-3.0-or-later",
   "author": "0xcrypto (https://eval.blog)",
   "repository": { "type": "git", "url": "git+https://github.com/ivxlabs/ivxai-app.git" },

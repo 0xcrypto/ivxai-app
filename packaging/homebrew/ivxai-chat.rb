@@ -1,17 +1,17 @@
 # Rendered by .github/workflows/homebrew.yml and pushed to ivxlabs/homebrew-tap
-# as Casks/ivx-ai-chat.rb. __VERSION__ and __SHA256__ are filled in there.
-cask "ivx-ai-chat" do
+# as Casks/ivxai-chat.rb. __VERSION__ and __SHA256__ are filled in there.
+cask "ivxai-chat" do
   version "__VERSION__"
   sha256 "__SHA256__"
 
-  url "https://github.com/ivxlabs/ivxai-app/releases/download/v#{version}/ivx-ai-chat-v#{version}-macos-universal.dmg"
-  name "ivx AI Chat"
+  url "https://github.com/ivxlabs/ivxai-app/releases/download/v#{version}/ivxai-chat-v#{version}-macos-universal.dmg"
+  name "ivxai Chat"
   desc "Chat UI for any LLM endpoint: no account, no backend, no telemetry"
   homepage "https://github.com/ivxlabs/ivxai-app"
 
   depends_on macos: ">= :big_sur"
 
-  app "ivx AI Chat.app"
+  app "ivxai Chat.app"
 
   # The app carries no paid developer certificate, so Homebrew's own quarantine
   # flag is what Gatekeeper will complain about. Say so rather than stripping it
@@ -21,7 +21,7 @@ cask "ivx-ai-chat" do
     Either right-click the app and choose Open, or reinstall without the
     quarantine flag:
 
-      brew install --cask --no-quarantine ivx-ai-chat
+      brew install --cask --no-quarantine ivxai-chat
   EOS
 
   zap trash: [

@@ -1,152 +1,91 @@
-# ivx AI Chat — app
+# ivxai Chat — app
 
-Two ways to get past CORS, sharing one implementation.
+The desktop app, and the standalone CORS bridge it is built around.
 
-[ivx AI Chat](https://github.com/ivxlabs/chat) is a chat client that runs
-entirely in a browser and talks straight to whatever endpoint you point it at.
-That works right up until the endpoint does not send CORS headers — Ollama on
-its defaults, a bare llama.cpp build, a private proxy someone set up years ago.
-Those servers are running fine. The browser simply will not let a web page
-speak to them.
+<p align="center">
+  <img src="demo.png" alt="ivxai Chat running as a desktop app" width="820">
+</p>
 
-This repository fixes that twice over:
+[ivxai Chat](https://github.com/ivxlabs/chat) runs entirely in a browser and
+talks straight to whatever endpoint you point it at — right up until the
+endpoint sends no CORS headers. Ollama on its defaults, a bare llama.cpp build,
+a private proxy someone set up years ago: those servers are fine, the browser
+simply will not let a web page speak to them.
 
-- **`ivx-bridge`** — a 2 MB daemon. Install it, leave it running, and the
-  hosted app at <https://ai.ivx.run/chat> reaches every endpoint on your
-  machine. No app to install, nothing to keep updated.
-- **The app** — desktop and mobile, built with Tauri. Same UI, with the
-  same bridge running inside it. Nothing to configure.
+This repository solves that twice:
 
-The UI itself is not here. `web/` is a submodule pointing at
-[ivxlabs/chat](https://github.com/ivxlabs/chat), so the web app stays a web app
-and this repository stays about shipping it.
+- **`ivx-bridge`** — a 2 MB daemon. Leave it running and the hosted app reaches
+  every endpoint on your machine. Nothing to install, nothing to keep updated.
+- **The app** — the same UI in a native window, with the same bridge running
+  inside it. Nothing to configure.
 
-```
-web/                        submodule: ivx AI Chat, unchanged
-crates/ivx-bridge/       the CORS bridge — library and daemon
-src-tauri/                  the Tauri shell, which embeds that library
-```
+## Install
 
-## Getting it
+macOS:
 
 ```sh
-git clone --recurse-submodules https://github.com/ivxlabs/ivxai-app
-cd ivxai-app
-npm install          # also installs the web app's dependencies
+brew tap ivxlabs/tap
+brew install --cask ivxai-chat      # the app
+brew install ivx-bridge             # or just the bridge
 ```
 
-Already cloned without `--recurse-submodules`? `git submodule update --init`.
+Windows and Linux: take the installer from
+[Releases](https://github.com/ivxlabs/ivxai-app/releases).
 
-| What | Command | Needs |
+| Platform | App | Bridge |
 | --- | --- | --- |
-| The bridge alone | `cargo build --release -p ivx-bridge` | Rust |
-| Desktop app | `npm run build` | Rust, Node, [Tauri prerequisites](https://tauri.app/start/prerequisites/) |
-| Desktop, running | `npm run dev` | same |
-| Android | `npm run android` | + Android SDK/NDK |
-| iOS | `npm run ios` | + Xcode |
+| macOS | `.dmg` or `.app.tar.gz`, universal | `.tar.gz`, universal |
+| Windows | `-setup.exe` | `.tar.gz` |
+| Linux | `.AppImage` or `.deb` | `.tar.gz` |
 
-Mobile needs its platform project generated once, before the first run:
-
-```sh
-npm run android:init      # tauri android init, plus the overlay below
-npx tauri ios init
-```
+Nothing is notarised or signed with a paid certificate, so Gatekeeper and
+SmartScreen both object on first launch. The release notes say how to get past
+it.
 
 ## The bridge
 
 ```sh
-cargo build --release -p ivx-bridge
-./target/release/ivx-bridge
+ivx-bridge
 ```
 
 ```
-ivx-bridge 0.1.0 on http://127.0.0.1:8787
+ivx-bridge 0.1.1 on http://127.0.0.1:8787
   accepting: http://localhost:*, https://o.eval.blog, …
-  connect:   ivx AI Chat -> Settings -> CORS bypass -> Look for the bridge
+  connect:   ivxai Chat -> Settings -> CORS bypass -> Look for the bridge
 ```
 
-Then in the app: **Settings → CORS bypass → Look for the bridge**. It checks
-`127.0.0.1:8787`, and once it answers, provider calls go through it. The switch
-turns it off again at any time.
+Then in the app: **Settings → CORS bypass → Look for the bridge**. Once it
+answers, provider calls go through it, and the switch turns it off again at any
+time. `ivx-bridge --install-service` keeps it running across reboots (launchd on
+macOS, systemd `--user` on Linux); on Homebrew, `brew services start ivx-bridge`
+does the same.
 
-To keep it running across reboots:
-
-```sh
-ivx-bridge --install-service      # launchd on macOS, systemd --user on Linux
-ivx-bridge --uninstall-service
-```
-
-Any options you pass alongside `--install-service` are baked into the service,
-so `--install-service --port 9000 -v` installs it on port 9000 with logging.
-On Windows there is no equivalent; use Task Scheduler, or a shortcut in
-`shell:startup`.
-
-### What it does
-
-One route. `POST /proxy?url=<absolute URL>` forwards the request to that URL
-and streams the answer back, with the CORS headers a browser needs.
+One route: `POST /proxy?url=<absolute URL>` forwards the request and streams the
+answer back with the CORS headers a browser needs.
 
 - **Nothing is inspected.** It does not know what a chat completion is and never
   parses a body. Responses are piped through frame by frame, so a streamed
   completion still arrives token by token.
 - **Nothing is kept.** No disk, no cache, no request log. `-v` prints one line
-  per request — method, host, status — and never headers or bodies. Your API key
-  travels in the headers the browser set, to the endpoint you configured.
+  per request — method, host, status — and never headers or bodies.
 - **Browser-specific headers are dropped** before the request goes out:
   `Origin`, `Referer`, `Cookie`, `Accept-Encoding`. Several providers reject a
-  request that claims to come from a web page they do not recognise.
-- **`GET /health`** says what version and protocol it speaks, and whether it
-  would accept the asking origin. The app uses that to tell "nothing is
-  listening" apart from "listening, but not for you" — which a bare CORS failure
-  cannot distinguish.
+  request that claims to come from a page they do not recognise.
 
 ### Who is allowed to use it
 
-This is the part worth understanding before you run it. A daemon that forwards
-to any URL is useful to any page in your browser, not just this one — so the
-origin allowlist is the whole security boundary.
-
-It holds because the browser sets `Origin` itself and a page cannot forge it.
-A site you happen to visit cannot borrow the bridge to reach your router's admin
-page or a service on your network.
+A daemon that forwards to any URL is useful to any page in your browser, not
+just this one, so the origin allowlist is the whole security boundary. It holds
+because the browser sets `Origin` itself and a page cannot forge it — a site you
+happen to visit cannot borrow the bridge to reach your router's admin page.
 
 Allowed by default: `https://ai.ivx.run`, `https://o.eval.blog`,
-`https://ivxlabs.github.io`, any
-loopback origin on any port, and the Tauri webview origins. Everything else gets
-a 403 that names the flag you would need.
+`https://ivxlabs.github.io`, any loopback origin on any port, and the Tauri
+webview origins. Everything else gets a 403 naming the flag you would need.
 
-```sh
-ivx-bridge --allow-origin https://my.own.host    # add one
-ivx-bridge --only-origin  https://my.own.host    # replace the defaults
-ivx-bridge --allow-any-origin                    # development only
-```
-
-A request with **no** `Origin` at all is allowed. Those come from non-browser
-clients, and anything on your machine that can open a socket could already reach
-the same endpoints directly — so refusing them would buy nothing. If that is not
-true for you, because the machine is shared, use `--token <secret>`; the app has
-a field for it under the address.
-
-`--host 0.0.0.0` binds beyond this machine. Do not do that without `--token`;
-the bridge warns you if you try.
-
-### Safari
-
-Chrome and Firefox treat `http://127.0.0.1` as trustworthy, so an HTTPS page may
-call it. Safari does not, and blocks it as mixed content — so on Safari the
-hosted app cannot reach the bridge no matter how it is configured.
-
-The way out is to stop being cross-origin at all. The bridge will serve the app
-itself:
-
-```sh
-npm --prefix web run build
-ivx-bridge --ui-dir web/dist
-# open http://127.0.0.1:8787/
-```
-
-Now the page and the bridge share an origin: no mixed content, and nothing left
-for CORS to block.
+A request with **no** `Origin` is allowed: those come from non-browser clients,
+which could already reach the same endpoints directly. On a shared machine, use
+`--token <secret>` — the app has a field for it.
 
 ### Options
 
@@ -157,7 +96,7 @@ for CORS to block.
     --only-origin <o>    Accept only the origins given this way (repeatable)
     --allow-any-origin   Accept every origin. Development only
     --token <secret>     Require this token on /proxy
-    --ui-dir <dir>       Also serve a built copy of ivx AI Chat from here
+    --ui-dir <dir>       Also serve a built copy of ivxai Chat from here
     --insecure           Do not verify TLS upstream. Local self-signed only
     --connect-timeout <s>  Seconds to wait for a connection (default 30)
 -v, --verbose            One line per request
@@ -165,10 +104,38 @@ for CORS to block.
     --uninstall-service  Stop and remove it
 ```
 
-## The app
+### Safari
 
-`npm run dev` starts the web app's Vite server and opens the Tauri window
-against it. `npm run build` builds the web app into `web/dist` and bundles it.
+Chrome and Firefox treat `http://127.0.0.1` as trustworthy, so an HTTPS page may
+call it. Safari does not, and blocks it as mixed content. The way out is to stop
+being cross-origin: `ivx-bridge --ui-dir web/dist` serves the app itself, so the
+page and the bridge share an origin and there is nothing left to block.
+
+## Building it
+
+```sh
+git clone --recurse-submodules https://github.com/ivxlabs/ivxai-app
+cd ivxai-app
+npm install
+```
+
+| What | Command | Needs |
+| --- | --- | --- |
+| The bridge alone | `cargo build --release -p ivx-bridge` | Rust |
+| The app | `npm run build` | Rust, Node, [Tauri prerequisites](https://tauri.app/start/prerequisites/) |
+| The app, running | `npm run dev` | same |
+
+The UI is not in this repository: `web/` is a submodule pointing at
+[ivxlabs/chat](https://github.com/ivxlabs/chat), so the web app stays a web app
+and this repository stays about shipping it.
+
+```
+web/                  submodule: ivxai Chat, unchanged
+crates/ivx-bridge/    the CORS bridge — library and daemon
+src-tauri/            the Tauri shell, which embeds that library
+```
+
+## How the app carries the bridge
 
 The app starts its own copy of the bridge in-process, on an ephemeral loopback
 port behind a random token, and hands the page the address through a webview
@@ -179,147 +146,22 @@ window.__IVX_BRIDGE__ = { url: "http://127.0.0.1:50823", token: "…", source: "
 ```
 
 The UI picks that up and shows **Settings → CORS bypass** as "Built into this
-app" — there is nothing to turn on.
-
-### Android will not send that request by default
-
-That address is `http://`, and since Android 9 an app may not make a cleartext
-request unless it says so. Tauri's generated Gradle project sets
-`android:usesCleartextTraffic="false"` on release builds — which is right for
-everything except the one hop that never leaves the phone. Without a change,
-the shipped APK loads fine and then fails every provider call through the
-bridge with `ERR_CLEARTEXT_NOT_PERMITTED`. Debug builds set the same flag to
-`true`, so `npm run android` works and only the release APK is broken.
-
-`src-tauri/android/` holds a network security config that permits cleartext to
-`127.0.0.1` and `localhost` and nothing else, so the rest of the app stays
-HTTPS-only. A config resource overrides `usesCleartextTraffic` on API 24+,
-which is the whole trick; the debug source set carries a permissive copy so
-`tauri android dev` can still load the dev server off the host machine.
-
-`src-tauri/gen/` is generated rather than committed, so there is nowhere in it
-to keep that. `scripts/android-overlay.mjs` copies the files in and adds the
-manifest attribute pointing at them. It is idempotent, `npm run android` runs
-it, and so does the release workflow after `tauri android init`. Run it by hand
-with `npm run android:overlay` after any init you do yourself.
-
-### Why the bridge rather than Tauri's HTTP plugin
-
-The obvious alternative is to route provider calls through Tauri's IPC and a
-Rust-side HTTP client. That means a second networking path that only exists in
-the app, with its own streaming behaviour to get right and its own failure
-modes — and the UI would have to know which of the two it was running on.
-
-Reusing the bridge means the hosted web build, the desktop app and the mobile
-app all make the same `fetch` to the same kind of endpoint. There is one
-implementation to get right, and `web/` never has to care where it is running.
-
-An initialization script is used rather than a Tauri command because it runs in
-the webview's privileged context, so the app's `script-src 'self'`
-Content-Security-Policy stays exactly as it is on the web.
+app". Reusing the bridge this way means the hosted build and the app make the
+same `fetch` to the same kind of endpoint — one implementation to get right, and
+`web/` never has to care where it is running.
 
 ## Releasing
 
-Push a tag and `.github/workflows/release.yml` builds everything onto one draft
-release: the bridge for four platforms, and the app for six.
+Bump the version in `Cargo.toml`, `package.json` and `src-tauri/tauri.conf.json`,
+tag that commit `vX.Y.Z`, and push the tag. `release.yml` builds the app and the
+bridge for all three platforms onto one **draft** release; check the artefacts
+and publish it. Publishing updates the [Homebrew
+tap](https://github.com/ivxlabs/homebrew-tap) automatically.
 
-```sh
-git tag v0.1.0 && git push origin v0.1.0
-```
+## Contributing
 
-| Artefact | Built on | Notes |
-| --- | --- | --- |
-| `ivx-ai-chat-<tag>-macos-universal.app.tar.gz` | macOS | one binary, Apple Silicon and Intel |
-| `ivx-ai-chat-<tag>-macos-universal.dmg` | macOS | best effort — see below |
-| `ivx-ai-chat-<tag>-windows-x86_64-setup.exe` | Windows | NSIS installer |
-| `ivx-ai-chat-<tag>-linux-x86_64.AppImage` / `.deb` | Linux | |
-| `ivx-ai-chat-<tag>-android.apk` | Linux | universal, signed |
-| `ivx-ai-chat-<tag>-ios-unsigned.ipa` | macOS | for sideloading |
-| `ivx-bridge-<tag>-<platform>.tar.gz` | all four | the daemon alone |
-
-The release is left as a **draft** — check the artefacts, then publish.
-
-### iOS is unsigned on purpose
-
-`tauri ios build --no-sign` produces a `Payload/ivx AI Chat.app` with no signature
-and no embedded provisioning profile. That is what AltStore, SideStore and
-Sideloadly want: they re-sign with the user's own Apple ID. Shipping an IPA
-signed with someone else's certificate would be useless to them and would need
-a paid developer account to produce.
-
-The job asserts all three properties before uploading, because an IPA that is
-subtly wrong still looks like an IPA.
-
-### Android needs a keystore
-
-Tauri emits an *unsigned* APK, and Android refuses to install one, so the job
-signs it with `zipalign` + `apksigner` and fails loudly if it cannot. Make a key
-once:
-
-```sh
-keytool -genkeypair -v -keystore ivx.jks -alias ivx \
-  -keyalg RSA -keysize 2048 -validity 10000
-base64 -i ivx.jks | pbcopy      # -w0 on Linux
-```
-
-Then add four repository secrets:
-
-| Secret | Value |
-| --- | --- |
-| `ANDROID_KEYSTORE_BASE64` | the base64 above |
-| `ANDROID_KEYSTORE_PASSWORD` | store password |
-| `ANDROID_KEY_ALIAS` | `ivx` |
-| `ANDROID_KEY_PASSWORD` | key password |
-
-Keep that keystore. Android identifies an app by its signing key, so losing it
-means every existing install has to be uninstalled before it can be upgraded.
-
-### The macOS .dmg can fail, and that is allowed
-
-Tauri's dmg step drives Finder over AppleScript to lay the disk image window
-out, which needs a desktop session. On a runner without one it fails with
-`Not authorized to send Apple events to Finder (-1743)`. The `.app.tar.gz` is
-built first and is the real deliverable, so the job logs a warning and carries
-on rather than losing the whole release to window decoration.
-
-### Nothing is notarised
-
-No paid Apple or Windows certificate is involved, so Gatekeeper and SmartScreen
-will both object on first launch. The draft release notes tell people how to get
-past it; see them for the exact incantations.
-
-### Mobile projects are generated, not committed
-
-`src-tauri/gen/` is in `.gitignore`, so the Android and iOS jobs run
-`tauri android init` / `tauri ios init` before building. Nothing to keep in
-sync, and no generated Xcode or Gradle project in review diffs.
-
-The cost is that a change to the generated project has nowhere to live, so the
-Android job runs `scripts/android-overlay.mjs` between init and build — see
-[Android will not send that request by default](#android-will-not-send-that-request-by-default).
-It fails loudly if the Tauri template moves out from under it, because an APK
-whose bridge cannot be reached still looks like a working APK.
-
-## Development
-
-```sh
-cargo test --workspace                  # bridge unit tests
-cargo run -p ivx-bridge -- -v        # the daemon, chatty
-npm --prefix web run mock               # a fake provider on :8124
-```
-
-A useful end-to-end check is a provider that sends *no* CORS headers, since
-that is the case the bridge exists for. Point ivx AI Chat at one, confirm the
-browser refuses it, then turn the bridge on and confirm it streams.
-
-### Updating the UI
-
-`web/` is pinned to a commit. To move it:
-
-```sh
-git -C web pull origin main
-git add web && git commit -m "Update web to <sha>"
-```
+Development notes, the mobile builds and the release internals are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Supporting it
 

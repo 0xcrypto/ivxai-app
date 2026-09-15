@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 0xcrypto
 
-//! ivx AI Chat as an installed app.
+//! ivxai Chat as an installed app.
 //!
-//! The webview is the same ivx AI Chat that runs on the web — `web/` is a
+//! The webview is the same ivxai Chat that runs on the web — `web/` is a
 //! submodule, and this crate adds nothing to the page. What it adds is a
 //! [`ivx_bridge`] server running in-process on an ephemeral loopback port,
 //! which is how the app escapes CORS: providers that refuse a browser origin
@@ -132,5 +132,5 @@ pub fn run() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running ivx AI Chat");
+        .expect("error while running ivxai Chat");
 }
