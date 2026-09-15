@@ -117,7 +117,7 @@ function disclaimerScreen() {
 
 export function openIntro(shell) {
   if (shell) app = shell;
-  openSheet({ title: 'Welcome to ivx AI Chat ✨', render: introScreen });
+  openSheet({ title: 'Welcome to ivxai Chat ✨', render: introScreen });
 }
 
 function introScreen() {
@@ -816,6 +816,10 @@ const version = (key, licence) => {
    attention or their data, which leaves exactly one way to fund it. */
 const SPONSOR_URL = 'https://github.com/sponsors/0xcrypto';
 const SOURCE_URL = 'https://github.com/ivxlabs/chat';
+const LICENCE_URL = `${SOURCE_URL}/blob/main/LICENSE`;
+/* The native shell is a separate repository, with its own copy of the terms. */
+const APP_SOURCE_URL = 'https://github.com/ivxlabs/ivxai-app';
+const APP_LICENCE_URL = `${APP_SOURCE_URL}/blob/main/LICENSE`;
 
 const bigLink = (href, text, kind) => el('a', {
   class: `btn btn-${kind} btn-block`, href, target: '_blank', rel: 'noopener noreferrer', text,
@@ -848,16 +852,21 @@ function aboutScreen() {
            'and model lists, sent straight to the endpoint you configured.'),
     ]),
     group(null, [
-      actionRow('What is ivx AI Chat?', { sub: 'The welcome tour', onclick: () => openIntro() }),
+      actionRow('What is ivxai Chat?', { sub: 'The welcome tour', onclick: () => openIntro() }),
     ]),
 
     // Free software: the people running it should be able to find the source
     // and the terms without leaving the app.
     group('This app', [
       linkRow('Source code', SOURCE_URL, 'github.com/ivxlabs/chat'),
-      linkRow('Licence', 'https://www.gnu.org/licenses/gpl-3.0.html', 'GNU GPL v3 or later'),
+      linkRow('Licence', LICENCE_URL, 'GNU GPL v3 or later'),
     ], 'Free software: you may use, study, share and change it, provided your ' +
        'changes carry the same licence.'),
+
+    group('Desktop app', [
+      linkRow('Source code', APP_SOURCE_URL, 'github.com/ivxlabs/ivxai-app'),
+      linkRow('Licence', APP_LICENCE_URL, 'GNU GPL v3 or later'),
+    ], 'The native build wraps this same page and carries the bridge inside it.'),
 
     group('Where your data lives', [
       actionRow('IndexedDB · ivx', { sub: 'Conversations, messages, providers, API keys' }),

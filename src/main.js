@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 0xcrypto
 
-/* ivx AI Chat — a local-only AI chat client.
+/* ivxai Chat — a local-only AI chat client.
 
    No analytics, no third-party requests, no backend. The only outbound traffic
    is the chat/model call the user asks for, aimed at the endpoint they typed. */
@@ -1038,6 +1038,6 @@ boot().catch(err => {
   console.error(err);
   document.body.prepend(el('div', {
     class: 'group-note',
-    text: `ivx AI Chat failed to start: ${err.message}`,
+    text: `ivxai Chat failed to start: ${err.message}`,
   }));
 });
