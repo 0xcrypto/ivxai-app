@@ -238,9 +238,9 @@ mod service {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     use std::process::Command;
 
-    // Only launchd and systemd name their units; the Windows fallback below
-    // never reads this.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    // Only launchd labels its job this way; the systemd unit is named by its
+    // filename and Windows has no service path at all.
+    #[cfg(target_os = "macos")]
     const LABEL: &str = "run.ivx.bridge";
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
