@@ -238,6 +238,9 @@ mod service {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     use std::process::Command;
 
+    // Only launchd and systemd name their units; the Windows fallback below
+    // never reads this.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     const LABEL: &str = "run.ivx.bridge";
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -400,10 +403,7 @@ mod service {
     #[cfg(target_os = "linux")]
     pub fn uninstall() -> Result<(), BoxError> {
         let path = unit_path()?;
-        let _ = run(
-            "systemctl",
-            &["--user", "disable", "--now", "ivx-bridge"],
-        );
+        let _ = run("systemctl", &["--user", "disable", "--now", "ivx-bridge"]);
         if path.exists() {
             std::fs::remove_file(&path)?;
         }
