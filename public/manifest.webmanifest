@@ -1,6 +1,6 @@
 {
-  "name": "ivxai Chat — private, local-first AI chat",
-  "short_name": "ivxai Chat",
+  "name": "ivx/ai Chat — private, local-first AI chat",
+  "short_name": "ivx/ai Chat",
   "description": "A private, offline-first AI chat client. Keys and conversations stay in your browser.",
   "start_url": "./index.html",
   "scope": "./",

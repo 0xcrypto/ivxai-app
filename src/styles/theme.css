@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 0xcrypto */
 
-/* ivxai Chat theme: IBM Plex + a neutral grayscale ramp.
+/* ivx/ai Chat theme: IBM Plex + a neutral grayscale ramp.
 
    Halfmoon's palette is overridden here rather than edited, so the npm copy
    stays untouched. Selectors carry html[data-bs-core] to outrank Halfmoon's

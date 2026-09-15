@@ -1,4 +1,4 @@
-# ivxai Chat
+# ivx/ai Chat
 
 A chat client that runs entirely in your browser. No backend, no accounts, no
 analytics, no telemetry. Point it at a model on your own machine or bring an API
@@ -6,7 +6,7 @@ key — the app talks to that endpoint directly, and your conversations and keys
 stay in your browser.
 
 <p align="center">
-  <img src="demo.png" alt="ivxai Chat with a new conversation open" width="820">
+  <img src="demo.png" alt="ivx/ai Chat with a new conversation open" width="820">
 </p>
 
 <p align="center">
@@ -122,7 +122,7 @@ before changing CSS are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Supporting it
 
-ivxai Chat is part of [ivx](https://github.com/ivxlabs)' effort to strip
+ivx/ai Chat is part of [ivx](https://github.com/ivxlabs)' effort to strip
 trackers and advertising out of privacy-critical infrastructure, and to make
 open-weight models a practical default. No ads, no telemetry, no paid tier.
 

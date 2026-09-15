@@ -117,7 +117,7 @@ function disclaimerScreen() {
 
 export function openIntro(shell) {
   if (shell) app = shell;
-  openSheet({ title: 'Welcome to ivxai Chat ✨', render: introScreen });
+  openSheet({ title: 'Welcome to ivx/ai Chat ✨', render: introScreen });
 }
 
 function introScreen() {
@@ -852,7 +852,7 @@ function aboutScreen() {
            'and model lists, sent straight to the endpoint you configured.'),
     ]),
     group(null, [
-      actionRow('What is ivxai Chat?', { sub: 'The welcome tour', onclick: () => openIntro() }),
+      actionRow('What is ivx/ai Chat?', { sub: 'The welcome tour', onclick: () => openIntro() }),
     ]),
 
     // Free software: the people running it should be able to find the source

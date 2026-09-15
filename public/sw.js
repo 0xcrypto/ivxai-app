@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 0xcrypto
 
-/* Offline shell for ivxai Chat.
+/* Offline shell for ivx/ai Chat.
 
    This worker only ever touches same-origin GET requests for the app's own
    files. Provider API calls (different origin, and POSTs) fall straight

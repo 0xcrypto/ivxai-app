@@ -78,9 +78,9 @@ function serviceWorkerPrecache() {
  * are prepended here after the bundle is written.
  */
 function licenceNotices() {
-  const js = '/*! ivxai Chat | GPL-3.0-or-later | Copyright (C) 2026 0xcrypto\n' +
+  const js = '/*! ivx/ai Chat | GPL-3.0-or-later | Copyright (C) 2026 0xcrypto\n' +
     ' * Source: https://github.com/ivxlabs/chat */\n';
-  const css = '/*! ivxai Chat | GPL-3.0-or-later | Copyright (C) 2026 0xcrypto\n' +
+  const css = '/*! ivx/ai Chat | GPL-3.0-or-later | Copyright (C) 2026 0xcrypto\n' +
     ' * Source: https://github.com/ivxlabs/chat\n' +
     ' * Bundles Halfmoon CSS v2.0.2 (MIT, Copyright (c) 2023 Tahmid Khan)\n' +
     ' * and IBM Plex (SIL Open Font License 1.1, Copyright IBM Corp.) */\n';

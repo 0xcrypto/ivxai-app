@@ -1,7 +1,7 @@
 {
   "name": "ivx-ai-chat",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Local-only AI chat client. Keys and conversations stay in the browser.",
   "license": "GPL-3.0-or-later",

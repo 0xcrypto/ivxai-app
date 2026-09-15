@@ -9,7 +9,7 @@
      header-only, so serve it from your web server if you need it. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src *; form-action 'self'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
-<title>ivxai Chat</title>
+<title>ivx/ai Chat</title>
 <meta name="description" content="A private, offline-first AI chat client for local and hosted models. Your keys and conversations never leave your browser.">
 <meta name="theme-color" content="#0a0a0a">
 <meta name="mobile-web-app-capable" content="yes">
@@ -25,7 +25,13 @@
   <!-- ── Drawer: conversations ───────────────────────────────── -->
   <aside id="drawer" class="drawer" aria-label="Conversations">
     <header class="drawer-head">
-      <span class="brand"><span class="brand-mark">ivxai</span><span class="brand-sub">Chat</span></span>
+      <!-- The slash is branding, not punctuation: screen readers should say
+           "ivx AI Chat" rather than spelling the separator. -->
+      <span class="brand">
+        <span class="brand-mark" aria-hidden="true">ivx<span class="brand-slash">/</span>ai</span>
+        <span class="brand-sub" aria-hidden="true">Chat</span>
+        <span class="visually-hidden">ivx AI Chat</span>
+      </span>
       <button id="btnCloseDrawer" class="icon-btn" type="button" aria-label="Close">&#10005;</button>
     </header>
 

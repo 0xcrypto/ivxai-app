@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 0xcrypto */
 
-/* ivxai Chat — mobile-first app shell.
+/* ivx/ai Chat — mobile-first app shell.
 
    One column at every width. Navigation is a drawer, every panel is a bottom
    sheet, and touch targets are 44px. Halfmoon supplies the tokens, form
@@ -71,6 +71,10 @@ body {
 }
 .brand { display: flex; align-items: baseline; gap: .3rem; }
 .brand-mark { font-weight: 600; font-size: 1.0625rem; letter-spacing: -.02em; color: var(--bs-emphasis-color); }
+/* The slash carries the brand, so it is set apart from the letters rather
+   than reading as punctuation between two words. */
+.brand-slash { color: var(--bs-secondary-color); margin: 0 .02em; }
+
 .brand-sub {
   font-weight: 500; font-size: .6875rem; letter-spacing: .1em; text-transform: uppercase;
   color: var(--bs-secondary-color);
