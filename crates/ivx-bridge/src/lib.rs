@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 0xcrypto
 
-//! The ivxai Chat bridge: a loopback HTTP server that answers preflights so
+//! The ivx/ai Chat bridge: a loopback HTTP server that answers preflights so
 //! a browser will let the app talk to endpoints that do not send CORS headers
 //! of their own — Ollama on its default settings, a bare llama.cpp build, an
 //! internal proxy someone set up years ago.
@@ -61,7 +61,7 @@ pub struct Config {
     pub origins: OriginPolicy,
     /// When set, `/proxy` requires it as `?token=` or `X-Ivx-Token`.
     pub token: Option<String>,
-    /// Serve a built copy of ivxai Chat from this directory.
+    /// Serve a built copy of ivx/ai Chat from this directory.
     ///
     /// Worth doing on Safari, which — unlike Chrome and Firefox — still counts
     /// `http://127.0.0.1` as mixed content when the page itself came over

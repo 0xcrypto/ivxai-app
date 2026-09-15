@@ -31,6 +31,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Ten seconds here beats discovering after three platform builds that the
+      # artefacts are named for a version the app does not report.
+      - name: Check the tag matches the version
+        run: node scripts/version.mjs --check "$TAG"
+
       - name: Create the draft
         env:
           GH_TOKEN: ${{ github.token }}
@@ -60,7 +69,7 @@ jobs:
             exit 0
           fi
           printf '%s' "$NOTES" > notes.md
-          gh release create "$TAG" --draft --title "ivxai Chat $TAG" --notes-file notes.md
+          gh release create "$TAG" --draft --title "ivx/ai Chat $TAG" --notes-file notes.md
 
   build:
     name: ${{ matrix.name }}

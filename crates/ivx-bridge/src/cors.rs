@@ -33,7 +33,7 @@ pub enum OriginPolicy {
     List(Vec<OriginRule>),
 }
 
-/// Where ivxai Chat is normally served from, plus the origins a webview uses.
+/// Where ivx/ai Chat is normally served from, plus the origins a webview uses.
 pub fn default_rules() -> Vec<OriginRule> {
     [
         "https://ai.ivx.run",

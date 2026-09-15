@@ -7,7 +7,7 @@ npm --prefix web run mock         # a fake provider on :8124
 ```
 
 A useful end-to-end check is a provider that sends *no* CORS headers, since that
-is the case the bridge exists for. Point ivxai Chat at one, confirm the browser
+is the case the bridge exists for. Point ivx/ai Chat at one, confirm the browser
 refuses it, then turn the bridge on and confirm it streams.
 
 ## Updating the UI
@@ -75,11 +75,12 @@ Two things worth knowing before you touch it:
   AppleScript to lay the window out, which needs a desktop session, and fails on
   a runner without one. The `.app.tar.gz` is built first and is the real
   deliverable, so the job warns and carries on.
-- **The version lives in three files** — `Cargo.toml`, `package.json` and
-  `src-tauri/tauri.conf.json` — and nothing keeps them in sync with the tag.
-  Artefact names come from the tag; the version the app reports comes from
-  those. The Homebrew formula asserts the two agree, so a mismatch surfaces
-  there.
+- **The version has one home:** `[workspace.package]` in `Cargo.toml`. Both
+  crates inherit it, and `tauri.conf.json` has no `version` field so Tauri falls
+  back to Cargo. `scripts/version.mjs` writes it and mirrors it into
+  `package.json`; `npm run bump <patch|minor|major|X.Y.Z>` is the only way it
+  should ever change. The draft job runs `--check "$TAG"` and refuses to open a
+  release whose tag disagrees.
 
 The tap needs a `HOMEBREW_TAP_TOKEN` secret: a fine-grained token scoped to the
 tap repository with Contents: read and write, and nothing else.

@@ -5,7 +5,7 @@ cask "ivxai-chat" do
   sha256 "__SHA256__"
 
   url "https://github.com/ivxlabs/ivxai-app/releases/download/v#{version}/ivxai-chat-v#{version}-macos-universal.dmg"
-  name "ivxai Chat"
+  name "ivx/ai Chat"
   desc "Chat UI for any LLM endpoint: no account, no backend, no telemetry"
   homepage "https://github.com/ivxlabs/ivxai-app"
 

@@ -5,7 +5,7 @@
 //!
 //! This is the whole "you do not have to install an app" path: one binary,
 //! a few megabytes, no window, no runtime. Install it, leave it running, and
-//! the hosted ivxai Chat can reach endpoints that would otherwise refuse a
+//! the hosted ivx/ai Chat can reach endpoints that would otherwise refuse a
 //! browser.
 //!
 //! Argument parsing is by hand. A dependency for it would be larger than the
@@ -32,7 +32,7 @@ OPTIONS
       --allow-any-origin   Accept every origin. Development only
       --token <secret>     Require this token on /proxy, as ?token= or
                            X-Ivx-Token. For shared machines
-      --ui-dir <dir>       Also serve a built copy of ivxai Chat from here.
+      --ui-dir <dir>       Also serve a built copy of ivx/ai Chat from here.
                            Needed on Safari, which blocks http://127.0.0.1
                            from an HTTPS page
       --insecure           Do not verify TLS upstream. Local self-signed
@@ -212,7 +212,7 @@ async fn run() -> Result<(), BoxError> {
     match &config.ui_dir {
         Some(dir) => println!("  serving:   {} — open http://{addr}/", dir.display()),
         None => {
-            println!("  connect:   ivxai Chat -> Settings -> CORS bypass -> Look for the bridge")
+            println!("  connect:   ivx/ai Chat -> Settings -> CORS bypass -> Look for the bridge")
         }
     }
 
@@ -381,7 +381,7 @@ mod service {
             &path,
             format!(
                 "[Unit]\n\
-                 Description=ivxai Chat bridge\n\
+                 Description=ivx/ai Chat bridge\n\
                  Documentation=https://github.com/ivxlabs/ivxai-app\n\
                  After=network-online.target\n\
                  \n[Service]\n\

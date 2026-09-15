@@ -1,9 +1,9 @@
 {
   "name": "ivxai-app",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
-  "description": "ivxai Chat for desktop and mobile, plus the standalone CORS bridge.",
+  "description": "ivx/ai Chat for desktop and mobile, plus the standalone CORS bridge.",
   "license": "GPL-3.0-or-later",
   "author": "0xcrypto (https://eval.blog)",
   "repository": { "type": "git", "url": "git+https://github.com/ivxlabs/ivxai-app.git" },
@@ -19,6 +19,7 @@
     "bridge": "cargo run --release -p ivx-bridge --",
     "bridge:build": "cargo build --release -p ivx-bridge",
     "test": "cargo test --workspace",
+    "bump": "node scripts/version.mjs",
     "tauri": "tauri"
   },
   "devDependencies": {

@@ -1,12 +1,12 @@
-# ivxai Chat — app
+# ivx/ai Chat — app
 
 The desktop app, and the standalone CORS bridge it is built around.
 
 <p align="center">
-  <img src="demo.png" alt="ivxai Chat running as a desktop app" width="820">
+  <img src="demo.png" alt="ivx/ai Chat running as a desktop app" width="820">
 </p>
 
-[ivxai Chat](https://github.com/ivxlabs/chat) runs entirely in a browser and
+[ivx/ai Chat](https://github.com/ivxlabs/chat) runs entirely in a browser and
 talks straight to whatever endpoint you point it at — right up until the
 endpoint sends no CORS headers. Ollama on its defaults, a bare llama.cpp build,
 a private proxy someone set up years ago: those servers are fine, the browser
@@ -51,7 +51,7 @@ ivx-bridge
 ```
 ivx-bridge 0.1.1 on http://127.0.0.1:8787
   accepting: http://localhost:*, https://o.eval.blog, …
-  connect:   ivxai Chat -> Settings -> CORS bypass -> Look for the bridge
+  connect:   ivx/ai Chat -> Settings -> CORS bypass -> Look for the bridge
 ```
 
 Then in the app: **Settings → CORS bypass → Look for the bridge**. Once it
@@ -96,7 +96,7 @@ which could already reach the same endpoints directly. On a shared machine, use
     --only-origin <o>    Accept only the origins given this way (repeatable)
     --allow-any-origin   Accept every origin. Development only
     --token <secret>     Require this token on /proxy
-    --ui-dir <dir>       Also serve a built copy of ivxai Chat from here
+    --ui-dir <dir>       Also serve a built copy of ivx/ai Chat from here
     --insecure           Do not verify TLS upstream. Local self-signed only
     --connect-timeout <s>  Seconds to wait for a connection (default 30)
 -v, --verbose            One line per request
@@ -130,7 +130,7 @@ The UI is not in this repository: `web/` is a submodule pointing at
 and this repository stays about shipping it.
 
 ```
-web/                  submodule: ivxai Chat, unchanged
+web/                  submodule: ivx/ai Chat, unchanged
 crates/ivx-bridge/    the CORS bridge — library and daemon
 src-tauri/            the Tauri shell, which embeds that library
 ```
@@ -152,8 +152,8 @@ same `fetch` to the same kind of endpoint — one implementation to get right, a
 
 ## Releasing
 
-Bump the version in `Cargo.toml`, `package.json` and `src-tauri/tauri.conf.json`,
-tag that commit `vX.Y.Z`, and push the tag. `release.yml` builds the app and the
+Bump the version with `npm run bump patch` (or `minor`, `major`, or an exact
+`0.2.0`), commit it, and tag that commit `vX.Y.Z`. `release.yml` builds the app and the
 bridge for all three platforms onto one **draft** release; check the artefacts
 and publish it. Publishing updates the [Homebrew
 tap](https://github.com/ivxlabs/homebrew-tap) automatically.

@@ -70,7 +70,7 @@ jobs:
           # Re-running the workflow on an unchanged release should be a no-op,
           # not an empty commit.
           git diff --cached --quiet && { echo "tap already up to date"; exit 0; }
-          git commit -m "ivxai Chat $VERSION"
+          git commit -m "ivx/ai Chat $VERSION"
 
           # Another product may have pushed between our checkout and now, so
           # rebase onto whatever landed rather than failing the release.
