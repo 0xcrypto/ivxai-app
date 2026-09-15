@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Release
 
-# Tag a version to publish. Everything lands on one draft release: the bridge
-# binaries, and the app for every platform it runs on.
+# Tag a version to publish. One draft release holds, for each of the three
+# desktop platforms, the app and the standalone bridge.
 on:
   push:
     tags: ['v*']
@@ -43,8 +43,6 @@ jobs:
             | macOS | `*-macos-universal.dmg`, or the `.app.tar.gz` |
             | Windows | `*-windows-x86_64-setup.exe` |
             | Linux | `*.AppImage` or `*.deb` |
-            | Android | `*-android.apk` |
-            | iOS (sideload) | `*-ios-unsigned.ipa` |
 
             ### A note on signing
 
@@ -56,12 +54,6 @@ jobs:
               `xattr -dr com.apple.quarantine "/Applications/ivx AI Chat.app"`.
             - **Windows** — SmartScreen shows "Windows protected your PC".
               More info → Run anyway.
-            - **Android** — signed with the project's own key, so it installs
-              once you allow your browser or file manager to install unknown
-              apps.
-            - **iOS** — the IPA is deliberately *unsigned*, which is what
-              sideloading wants. Sign it with your own Apple ID using AltStore,
-              SideStore or Sideloadly. It will not install on its own.
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists; uploads will be added to it."
@@ -70,45 +62,8 @@ jobs:
           printf '%s' "$NOTES" > notes.md
           gh release create "$TAG" --draft --title "ivx AI Chat $TAG" --notes-file notes.md
 
-  bridge:
-    name: bridge (${{ matrix.name }})
-    needs: draft
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: macos-latest,   target: aarch64-apple-darwin,     name: macos-arm64 }
-          - { os: macos-latest,   target: x86_64-apple-darwin,      name: macos-x86_64 }
-          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu, name: linux-x86_64 }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc,   name: windows-x86_64 }
-    steps:
-      # The bridge crate does not need the UI, so this job skips the submodule.
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p ivx-bridge --target ${{ matrix.target }}
-
-      - name: Package and upload
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -eu
-          mkdir -p out
-          cp README.md LICENSE out/
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp target/${{ matrix.target }}/release/ivx-bridge.exe out/
-          else
-            cp target/${{ matrix.target }}/release/ivx-bridge out/
-          fi
-          tar -czf "ivx-bridge-$TAG-${{ matrix.name }}.tar.gz" -C out .
-          gh release upload "$TAG" "ivx-bridge-$TAG-${{ matrix.name }}.tar.gz" --clobber
-
-  desktop:
-    name: app (${{ matrix.name }})
+  build:
+    name: ${{ matrix.name }}
     needs: draft
     runs-on: ${{ matrix.os }}
     strategy:
@@ -126,6 +81,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - run: rustup target add ${{ matrix.rust_targets }}
       - uses: Swatinem/rust-cache@v2
@@ -138,14 +94,44 @@ jobs:
       - run: npm install
 
       # Each platform stages its finished, correctly named files in dist/.
+
+      # The bridge ships on its own too, for people who want the CORS bypass
+      # without the app. Same crate the app embeds, built as a binary.
+      - name: Bridge (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          set -eu
+          cargo build --release -p ivx-bridge --target aarch64-apple-darwin
+          cargo build --release -p ivx-bridge --target x86_64-apple-darwin
+          mkdir -p dist bridge
+          cp README.md LICENSE bridge/
+          lipo -create -output bridge/ivx-bridge \
+            target/aarch64-apple-darwin/release/ivx-bridge \
+            target/x86_64-apple-darwin/release/ivx-bridge
+          tar -czf "dist/ivx-bridge-$TAG-macos-universal.tar.gz" -C bridge .
+
+      - name: Bridge (Windows and Linux)
+        if: matrix.os != 'macos-latest'
+        shell: bash
+        run: |
+          set -eu
+          cargo build --release -p ivx-bridge --target ${{ matrix.rust_targets }}
+          mkdir -p dist bridge
+          cp README.md LICENSE bridge/
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/${{ matrix.rust_targets }}/release/ivx-bridge.exe bridge/
+          else
+            cp target/${{ matrix.rust_targets }}/release/ivx-bridge bridge/
+          fi
+          tar -czf "dist/ivx-bridge-$TAG-${{ matrix.name }}.tar.gz" -C bridge .
+
       # Bundles land in the workspace target/, not src-tauri/target/.
-      - name: Build (macOS)
+      - name: App (macOS)
         if: matrix.os == 'macos-latest'
         run: |
           set -eu
           BUNDLE=target/universal-apple-darwin/release/bundle
           npx tauri build --target universal-apple-darwin --bundles app
-          mkdir -p dist
           # productName has spaces in it, so take whatever .app was produced
           # rather than hardcoding a name that drifts when the app is renamed.
           APP=$(cd "$BUNDLE/macos" && ls -d *.app | head -1)
@@ -161,21 +147,19 @@ jobs:
             echo "::warning::dmg bundling failed; shipping the .app only"
           fi
 
-      - name: Build (Windows)
+      - name: App (Windows)
         if: matrix.os == 'windows-latest'
         shell: bash
         run: |
           set -eu
           npx tauri build --bundles nsis
-          mkdir -p dist
           cp target/release/bundle/nsis/*-setup.exe "dist/ivx-ai-chat-$TAG-windows-x86_64-setup.exe"
 
-      - name: Build (Linux)
+      - name: App (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           set -eu
           npx tauri build --bundles appimage,deb
-          mkdir -p dist
           cp target/release/bundle/appimage/*.AppImage "dist/ivx-ai-chat-$TAG-linux-x86_64.AppImage"
           cp target/release/bundle/deb/*.deb "dist/ivx-ai-chat-$TAG-linux-x86_64.deb"
 
@@ -188,116 +172,3 @@ jobs:
           # A silently empty upload is how a broken release goes unnoticed.
           [ -n "$(ls -A dist)" ] || { echo "nothing was built"; exit 1; }
           gh release upload "$TAG" dist/* --clobber
-
-  android:
-    name: app (android)
-    needs: draft
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install the NDK
-        run: |
-          sdkmanager --install "ndk;28.2.13676358" > /dev/null
-          echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
-
-      - run: npm install
-      # gen/android is generated rather than committed, so it is made here —
-      # and the overlay puts back what the template leaves out, without which
-      # the webview cannot reach the bridge. See scripts/android-overlay.mjs.
-      - run: npx tauri android init --ci
-      - run: node scripts/android-overlay.mjs
-      - run: npx tauri android build --apk
-
-      - name: Sign
-        env:
-          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -eu
-          if [ -z "${KEYSTORE:-}" ]; then
-            echo "::error::ANDROID_KEYSTORE_BASE64 is not set. Tauri emits an" \
-                 "unsigned APK and Android will not install one — see the README."
-            exit 1
-          fi
-          # Newest build-tools the runner has.
-          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
-          APK=src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
-
-          echo "$KEYSTORE" | base64 -d > /tmp/keystore.jks
-          "$BT/zipalign" -f -p 4 "$APK" /tmp/aligned.apk
-          "$BT/apksigner" sign \
-            --ks /tmp/keystore.jks \
-            --ks-key-alias "$KEY_ALIAS" \
-            --ks-pass "pass:$KEYSTORE_PASSWORD" \
-            --key-pass "pass:$KEY_PASSWORD" \
-            --out "ivx-ai-chat-$TAG-android.apk" /tmp/aligned.apk
-          "$BT/apksigner" verify --verbose "ivx-ai-chat-$TAG-android.apk"
-          rm -f /tmp/keystore.jks /tmp/aligned.apk
-
-      - name: Upload
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" "ivx-ai-chat-$TAG-android.apk" --clobber
-
-  ios:
-    name: app (ios, unsigned)
-    needs: draft
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-ios
-      - uses: Swatinem/rust-cache@v2
-      # `tauri ios init` shells out to these; installing them up front keeps the
-      # build off whatever a runner image happens to ship.
-      - run: brew install xcodegen cocoapods
-
-      - run: npm install
-      - run: npx tauri ios init --ci
-      # --no-sign is the whole point. Sideloading tools re-sign with the user's
-      # own Apple ID, and an IPA carrying someone else's signature and
-      # provisioning profile is no use to them.
-      - run: npx tauri ios build --no-sign
-        env:
-          CI: 'true'
-
-      - name: Check and upload
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -eu
-          IPA=$(ls src-tauri/gen/apple/build/arm64/*.ipa | head -1)
-
-          # An IPA only sideloads if it really is Payload/<name>.app and really
-          # carries no signature. Both are quiet failures otherwise.
-          unzip -qq -o "$IPA" -d /tmp/ipa
-          APP=$(ls -d /tmp/ipa/Payload/*.app)
-          test -n "$APP"
-          test ! -f "$APP/embedded.mobileprovision"
-          codesign -dv "$APP" 2>&1 | grep -q "not signed at all"
-
-          cp "$IPA" "ivx-ai-chat-$TAG-ios-unsigned.ipa"
-          gh release upload "$TAG" "ivx-ai-chat-$TAG-ios-unsigned.ipa" --clobber

@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Homebrew
+
+# Triggered by publishing, not by the tag: release.yml creates a *draft*, and
+# Homebrew cannot download from a draft. Publishing the release is the point at
+# which the URLs below start working.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: An existing published tag to push to the tap
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+
+jobs:
+  tap:
+    name: update the tap
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the macOS artifacts and hash them
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern '*-macos-universal.dmg' \
+            --pattern 'ivx-bridge-*-macos-universal.tar.gz'
+
+          # Strip the leading v: Homebrew versions are 1.2.3, tags are v1.2.3.
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+          echo "CASK_SHA=$(sha256sum ./*-macos-universal.dmg | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "FORMULA_SHA=$(sha256sum ./ivx-bridge-*-macos-universal.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
+      - name: Check out the tap
+        uses: actions/checkout@v4
+        with:
+          repository: ivxlabs/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Render and commit
+        run: |
+          set -eu
+          mkdir -p tap/Casks tap/Formula
+          render() {
+            sed -e "s/__VERSION__/$VERSION/" -e "s/__SHA256__/$2/" "$1" > "$3"
+          }
+          render packaging/homebrew/ivx-ai-chat.rb "$CASK_SHA"    tap/Casks/ivx-ai-chat.rb
+          render packaging/homebrew/ivx-bridge.rb  "$FORMULA_SHA" tap/Formula/ivx-bridge.rb
+
+          cd tap
+          BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Only ever stage this product's own files: the tap is shared with
+          # every other ivxlabs product.
+          git add Casks/ivx-ai-chat.rb Formula/ivx-bridge.rb
+          # Re-running the workflow on an unchanged release should be a no-op,
+          # not an empty commit.
+          git diff --cached --quiet && { echo "tap already up to date"; exit 0; }
+          git commit -m "ivx AI Chat $VERSION"
+
+          # Another product may have pushed between our checkout and now, so
+          # rebase onto whatever landed rather than failing the release.
+          for attempt in 1 2 3; do
+            git push && exit 0
+            echo "push rejected, rebasing (attempt $attempt)"
+            git pull --rebase origin "$BRANCH"
+          done
+          echo "::error::could not push to the tap after 3 attempts"
+          exit 1
