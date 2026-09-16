@@ -9,7 +9,9 @@ cask "ivxai-chat" do
   desc "Chat UI for any LLM endpoint: no account, no backend, no telemetry"
   homepage "https://github.com/ivxlabs/ivxai-app"
 
-  depends_on macos: ">= :big_sur"
+  # A bare symbol is the minimum version; the ">= :big_sur" string form is
+  # deprecated.
+  depends_on macos: :big_sur
 
   app "ivxai Chat.app"
 

@@ -21,6 +21,20 @@ git add web && git commit -m "Update web to <sha>"
 
 Cloned without `--recurse-submodules`? `git submodule update --init`.
 
+## The icon
+
+`src-tauri/icons/` is generated, and the mark is drawn by the web repository so
+both the PWA and the app show the same thing. To change it, edit the drawing in
+`web/tools/make-icons.mjs` (and `web/public/icons/icon.svg` to match), then:
+
+```sh
+node web/tools/make-icons.mjs /tmp/icon-1024.png 1024
+npx tauri icon /tmp/icon-1024.png
+```
+
+That rewrites the whole set — `.icns` for macOS, `.ico` for Windows, the PNG
+sizes and the Windows Store logos.
+
 ## Why the bridge rather than Tauri's HTTP plugin
 
 Routing provider calls through Tauri's IPC and a Rust-side HTTP client would

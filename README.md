@@ -25,9 +25,15 @@ macOS:
 
 ```sh
 brew tap ivxlabs/tap
+brew trust ivxlabs/tap              # once: see below
 brew install --cask ivxai-chat      # the app
 brew install ivx-bridge             # or just the bridge
 ```
+
+Homebrew refuses to load formulae and casks from a tap you have not trusted,
+because a tap is arbitrary Ruby that runs on your machine. `brew trust` records
+the decision in `~/.homebrew/trust.json` and you only make it once. Trust
+individual packages instead with `brew trust --cask ivxlabs/tap/ivxai-chat`.
 
 Windows and Linux: take the installer from
 [Releases](https://github.com/ivxlabs/ivxai-app/releases).
