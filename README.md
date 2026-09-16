@@ -1,4 +1,4 @@
-# ivx/ai Chat — app
+# ivx/ai Chat
 
 The desktop app, and the standalone CORS bridge it is built around.
 

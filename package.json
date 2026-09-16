@@ -1,7 +1,7 @@
 {
   "name": "ivxai-app",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.2.0",
   "type": "module",
   "description": "ivx/ai Chat for desktop and mobile, plus the standalone CORS bridge.",
   "license": "GPL-3.0-or-later",
