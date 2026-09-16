@@ -5,7 +5,8 @@
    Run with: node tools/make-icons.mjs   (only needed if the artwork changes)
 
    These exist so the PWA can be installed; the app itself shows a wordmark,
-   not a logo. The mark is a plain "N" in the neutral ramp. */
+   not a logo. The mark is the "ivx/ai" lockup set on two lines, in the neutral
+   ramp, with the slash dimmed the way the in-app brand mark dims it. */
 
 import { deflateSync } from 'node:zlib';
 import { writeFileSync } from 'node:fs';
@@ -80,10 +81,24 @@ function render(size, { padding = 0 } = {}) {
 
   const BG = [0x0a, 0x0a, 0x0a];                        // --n-950
   const FG = [0xfa, 0xfa, 0xfa];                        // --n-50
+  const DIM = [0x8a, 0x8a, 0x8a];                       // --n-500, for the slash
 
-  // "N": two uprights joined by a diagonal.
-  const STROKE = 0.085;
-  const TOP = 0.29, BOT = 0.71, L = 0.32, R = 0.68;
+  /* "ivx" over "/ai", so the whole brand fits at icon sizes: three glyphs a
+     line stay legible where six on one line turn to mush. Letterforms are
+     built from thick segments and one ring, the same primitives as before. */
+  const W = 0.052, hw = W / 2;
+  const X1T = 0.28, X1B = 0.44;                         // x-height, line one
+  const X2T = 0.58, X2B = 0.74;                         // x-height, line two
+
+  const stem = (px, py, x, t, b) => segment(px, py, x, t, x, b, hw);
+  const tittle = (px, py, x, y) => Math.hypot(px - x, py - y) - hw * 1.05;
+  const ring = (px, py, cx, cy, r) => Math.abs(Math.hypot(px - cx, py - cy) - r) - hw;
+  const vee = (px, py, l, r, t, b) => Math.min(
+    segment(px, py, l, t, (l + r) / 2, b, hw),
+    segment(px, py, r, t, (l + r) / 2, b, hw));
+  const ex = (px, py, l, r, t, b) => Math.min(
+    segment(px, py, l, t, r, b, hw),
+    segment(px, py, r, t, l, b, hw));
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
@@ -98,16 +113,31 @@ function render(size, { padding = 0 } = {}) {
           const plate = roundedRect(px, py, 0.5, 0.5, 0.5, 0.5, 0.22);
           const plateA = Math.min(Math.max(0.5 - plate * size * scale, 0), 1);
 
-          const glyph = Math.min(
-            segment(px, py, L, TOP, L, BOT, STROKE / 2),
-            segment(px, py, R, TOP, R, BOT, STROKE / 2),
-            segment(px, py, L, TOP, R, BOT, STROKE / 2)
+          const word = Math.min(
+            // ivx
+            stem(px, py, 0.288, X1T, X1B),
+            tittle(px, py, 0.288, X1T - 0.055),
+            vee(px, py, 0.368, 0.508, X1T, X1B),
+            ex(px, py, 0.568, 0.708, X1T, X1B),
+            // ai
+            ring(px, py, 0.518, (X2T + X2B) / 2, 0.075),
+            stem(px, py, 0.593, X2T, X2B),
+            stem(px, py, 0.688, X2T, X2B),
+            tittle(px, py, 0.688, X2T - 0.055)
           );
-          const glyphA = Math.min(Math.max(0.5 - glyph * size * scale, 0), 1) * plateA;
+          const slash = segment(px, py, 0.298, X2B + 0.02, 0.398, X2T - 0.02, hw);
 
-          r += mix(BG[0], FG[0], glyphA) * plateA;
-          g += mix(BG[1], FG[1], glyphA) * plateA;
-          b += mix(BG[2], FG[2], glyphA) * plateA;
+          const wordA = Math.min(Math.max(0.5 - word * size * scale, 0), 1) * plateA;
+          const slashA = Math.min(Math.max(0.5 - slash * size * scale, 0), 1) * plateA;
+
+          const ink = [
+            mix(mix(BG[0], DIM[0], slashA), FG[0], wordA),
+            mix(mix(BG[1], DIM[1], slashA), FG[1], wordA),
+            mix(mix(BG[2], DIM[2], slashA), FG[2], wordA),
+          ];
+          r += ink[0] * plateA;
+          g += ink[1] * plateA;
+          b += ink[2] * plateA;
           a += plateA;
         }
       }
@@ -122,7 +152,18 @@ function render(size, { padding = 0 } = {}) {
   return png(size, size, out);
 }
 
-writeFileSync('public/icons/icon-192.png', render(192));
-writeFileSync('public/icons/icon-512.png', render(512));
-writeFileSync('public/icons/maskable-512.png', render(512, { padding: 0.1 }));
-console.log('wrote public/icons/*.png');
+/* With arguments it writes one file at one size — that is how the desktop
+   app's icon set is produced, so both repositories draw the same mark:
+     node tools/make-icons.mjs /tmp/icon-1024.png 1024
+     cd ../ivxai-app && npx tauri icon /tmp/icon-1024.png                  */
+const [outPath, outSize] = process.argv.slice(2);
+
+if (outPath) {
+  writeFileSync(outPath, render(Number(outSize) || 1024));
+  console.log(`wrote ${outPath}`);
+} else {
+  writeFileSync('public/icons/icon-192.png', render(192));
+  writeFileSync('public/icons/icon-512.png', render(512));
+  writeFileSync('public/icons/maskable-512.png', render(512, { padding: 0.1 }));
+  console.log('wrote public/icons/*.png');
+}

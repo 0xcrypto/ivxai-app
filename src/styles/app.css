@@ -248,6 +248,32 @@ body {
   color: var(--bs-secondary-color); font-size: .9375rem; white-space: pre-wrap;
 }
 
+/* The record of a tool round: which agent was asked, with what, and what it
+   answered. Same shape as reasoning, since it reads as machine-side context. */
+.tool-ask { margin-bottom: .625rem; }
+.tool-ask summary {
+  cursor: pointer; list-style: none;
+  display: inline-flex; align-items: center; gap: .5rem;
+  min-height: 1.75rem; padding: 0 .625rem;
+  border-radius: .5rem; background-color: var(--bs-secondary-bg);
+  color: var(--bs-secondary-color); font-size: .8125rem;
+}
+.tool-ask summary::-webkit-details-marker { display: none; }
+.tool-ask-open {
+  border: 0; background: none; padding: 0; cursor: pointer;
+  color: var(--bs-primary); font: inherit; font-size: .8125rem;
+}
+.tool-ask-body {
+  margin-top: .5rem; padding-left: .75rem;
+  border-left: 2px solid var(--bs-border-color);
+  font-size: .9375rem;
+}
+.tool-ask-prompt {
+  color: var(--bs-secondary-color); white-space: pre-wrap;
+  margin-bottom: .5rem;
+}
+.tool-ask-answer { white-space: pre-wrap; }
+
 /* Meta and actions stay hidden until a message is tapped. */
 .msg-foot {
   display: none;
@@ -321,6 +347,11 @@ body {
   padding: .5rem var(--gutter) calc(.5rem + var(--safe-bottom));
 }
 .composer > * { max-width: var(--measure); margin-inline: auto; }
+
+/* Halfmoon v2 has no .btn-block of its own; in sheets .sheet-actions' flex
+   column stretches buttons, but the share bar has no flex parent, so the
+   button has to become a block to be centered by the auto margins above. */
+.share-bar .btn-block { display: block; width: 100%; }
 
 .composer-top { display: flex; margin-bottom: .5rem; }
 .chip {

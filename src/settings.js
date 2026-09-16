@@ -17,6 +17,10 @@ import {
 
 let app;                                   // the chat shell's own API
 
+/** The shell is wired once at boot, so agent screens reachable from the chat
+    (not just through Settings) can call back into the app. */
+export function setShell(shell) { app = shell; }
+
 export function openSettings(shell) {
   app = shell;
   openSheet({ title: 'Settings', render: rootScreen });
@@ -161,6 +165,10 @@ function rootScreen() {
 
   return el('div', {}, [
     group(null, [
+      navRow('Agents', {
+        sub: app.getAgents().length ? `${app.getAgents().length} configured` : 'None yet — one is made per provider',
+        onclick: () => pushScreen(app.agentScreens.picker()),
+      }),
       navRow('Providers', {
         sub: providers.length
           ? `${providers.length} configured · ${local} local`
@@ -233,7 +241,7 @@ async function scanLocal() {
   }
 
   const providers = app.getProviders();
-  let added = 0;
+  const added = [];
   for (const hit of hits) {
     const trim = u => u.replace(/\/+$/, '');
     const existing = providers.find(p => trim(p.baseUrl) === trim(hit.baseUrl));
@@ -247,11 +255,14 @@ async function scanLocal() {
     provider.models = hit.models;
     provider.defaultModel = hit.models[0] || '';
     providers.push(provider);
-    added++;
+    added.push(provider);
   }
   await app.saveProviders();
+  // Every provider configuration gets a default agent, and it becomes the
+  // one new chats reach for.
+  for (const p of added) await app.attachDefaultAgent(p);
   refreshSheet();
-  toast(added ? `Added ${added} local provider${added === 1 ? '' : 's'}` : 'Already configured — models refreshed', 'ok');
+  toast(added.length ? `Added ${added.length} local provider${added.length === 1 ? '' : 's'}` : 'Already configured — models refreshed', 'ok');
 }
 
 async function addProvider() {
@@ -268,6 +279,7 @@ async function addProvider() {
   if (providers.some(p => p.name === provider.name)) provider.name = `${provider.name} 2`;
   providers.push(provider);
   await app.saveProviders();
+  await app.attachDefaultAgent(provider);
   refreshSheet();
   pushScreen({ title: provider.name, render: () => providerScreen(provider) });
 }
@@ -361,6 +373,8 @@ function providerScreen(provider) {
           if (i >= 0) providers.splice(i, 1);
           try { await vault.removeKey(provider.id); } catch { /* locked: stays encrypted */ }
           await save();
+          // Its agents would point at a provider that no longer exists.
+          await app.forgetProvider(provider);
           popScreen();
           refreshSheet();
         },
@@ -442,6 +456,9 @@ async function pickModelFor(provider) {
   if (!model) return;
   provider.defaultModel = model;
   await app.saveProviders();
+  // The provider's default agent follows its default model until the agent
+  // has one of its own.
+  await app.attachDefaultAgent(provider);
   app.refreshChrome();
   refreshSheet();
 }

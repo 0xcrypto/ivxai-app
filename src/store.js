@@ -201,6 +201,7 @@ const UI_DEFAULTS = {
   width: 'narrow',
   sendOnEnter: true,
   lastConvId: null,
+  lastAgentId: null,
 };
 
 export function loadUI() {
