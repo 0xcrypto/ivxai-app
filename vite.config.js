@@ -84,7 +84,8 @@ function serviceWorkerPrecache() {
  */
 function licenceNotices() {
   const js = '/*! ivx/ai Chat | GPL-3.0-or-later | Copyright (C) 2026 0xcrypto\n' +
-    ' * Source: https://github.com/ivxlabs/chat */\n';
+    ' * Source: https://github.com/ivxlabs/chat\n' +
+    ' * Bundles highlight.js (BSD-3-Clause, Copyright (c) 2006 Ivan Sagalaev and others) */\n';
   const css = '/*! ivx/ai Chat | GPL-3.0-or-later | Copyright (C) 2026 0xcrypto\n' +
     ' * Source: https://github.com/ivxlabs/chat\n' +
     ' * Bundles Halfmoon CSS v2.0.2 (MIT, Copyright (c) 2023 Tahmid Khan)\n' +
@@ -136,6 +137,7 @@ export default defineConfig({
       halfmoon: installed('halfmoon'),
       plex: installed('@fontsource/ibm-plex-sans'),
       webllm: installed('@mlc-ai/web-llm'),
+      hljs: installed('highlight.js'),
     }),
   },
   // Relative base so the build can be dropped in any directory of any host.

@@ -109,26 +109,27 @@ body {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .conv-item.is-active .conv-item-title { font-weight: 600; }
-/* Agent-run threads read as secondary until hovered or opened. */
-.conv-item.is-spawned { opacity: .7; }
-.conv-item.is-spawned:hover, .conv-item.is-spawned.is-active { opacity: 1; }
-/* The archived-view swap rows sit at the list's edges and read as controls,
-   not chats. */
+/* Agent-run threads read as secondary to the chat that opened them. */
+.conv-item.is-spawned .conv-item-title { color: var(--bs-secondary-color); font-weight: 400; }
+/* The rows that swap the list into another view — archived chats, one chat's
+   threads — sit at the list's edges and read as controls, not chats. */
 .conv-arch-toggle { color: var(--bs-secondary-color); font-size: .875rem; }
-/* Icon-font caret inside the swap/expand rows; inline with the label. */
+/* Icon-font caret inside those rows; inline with the label. */
 .conv-caret { font-size: .75rem; margin-right: .25rem; }
-/* Agent-thread disclosure rows are icon-only; the caret is the whole label.
-   The row shrinks to a compact strip and the caret hugs the right edge, the
-   same corner every other disclosure chevron in the app lives in. */
-.conv-threads-toggle {
-  min-height: 1.75rem; padding: .25rem .625rem;
-  justify-content: flex-end;
-  color: var(--bs-tertiary-color);
+/* A chat with agent threads: the row is still the whole width and still opens
+   the chat, with the count laid over its right edge as a second target. */
+.conv-row { position: relative; }
+.conv-row .conv-item { padding-right: 3rem; }
+.conv-threads-badge {
+  position: absolute; inset: 0 0 0 auto;
+  display: flex; align-items: center; gap: .125rem;
+  padding: 0 .625rem;
+  border: 0; border-radius: 0 .75rem .75rem 0;
+  background: transparent; color: var(--bs-tertiary-color);
+  font-size: .75rem; line-height: 1; cursor: pointer;
 }
-.conv-threads-toggle:hover, .conv-threads-toggle.is-active { opacity: 1; color: var(--bs-secondary-color); }
-.conv-threads-toggle .conv-caret { font-size: 1rem; margin-right: 0; }
-/* Spawned threads nest under the chat that asked for them. */
-.conv-item.is-sub { margin-left: 1.5rem; }
+.conv-threads-badge:hover { background-color: var(--bs-border-color); color: var(--bs-emphasis-color); }
+.conv-threads-badge > span { font-size: 1rem; }
 
 /* ── Store ─────────────────────────────────────────────── */
 /* Catalog rows are divs (they hold a nested button), so hover and cursor
@@ -288,6 +289,31 @@ body {
 }
 .code-block pre { margin: 0; padding: 0 .75rem .75rem; overflow-x: auto; font-size: .875rem; line-height: 1.55; }
 .code-block pre code { background: none; padding: 0; font-size: inherit; }
+
+/* ── Syntax highlighting ───────────────────────────────────
+   highlight.js marks up far more classes than a theme needs. These are the
+   ones that carry meaning here; everything else inherits the body colour,
+   which is the right answer for it. Colours come from the theme's --code-*
+   tokens, so light and dark are one definition. */
+.hljs-comment, .hljs-quote { color: var(--code-comment); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag,
+.hljs-formula, .hljs-subst { color: var(--code-keyword); }
+.hljs-string, .hljs-regexp, .hljs-char.escape_,
+.hljs-symbol, .hljs-bullet, .hljs-link, .hljs-selector-attr,
+.hljs-selector-pseudo { color: var(--code-string); }
+.hljs-number, .hljs-attr, .hljs-attribute, .hljs-variable,
+.hljs-template-variable, .hljs-selector-id, .hljs-selector-class { color: var(--code-number); }
+.hljs-title, .hljs-title.function_, .hljs-name,
+.hljs-section, .hljs-built_in { color: var(--code-func); }
+/* Not .hljs-tag: in XML that wraps the whole element, brackets and all, and
+   tinting those loses the shape of the markup. Its .hljs-name carries it. */
+.hljs-title.class_, .hljs-type, .hljs-class .hljs-title { color: var(--code-type); }
+.hljs-meta, .hljs-meta .hljs-keyword, .hljs-comment .hljs-doctag { color: var(--code-meta); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+/* Diffs are the one place a line's colour is the whole message. */
+.hljs-addition { color: var(--code-added); }
+.hljs-deletion { color: var(--code-removed); }
 
 .reasoning { margin-bottom: .625rem; }
 .reasoning summary {

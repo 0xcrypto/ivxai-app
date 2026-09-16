@@ -5,7 +5,11 @@
 
    Security model: the source is escaped before any markup is generated, and
    every tag in the output is one this file wrote. Model output can therefore
-   never inject HTML. URLs are scheme-checked before they reach an href. */
+   never inject HTML. URLs are scheme-checked before they reach an href.
+   Fenced code is the one exception, and only in form: highlight.js escapes
+   the source itself and adds nothing but its own <span> wrappers. */
+
+import { highlightCode } from './highlight.js';
 
 const escapeHtml = s => s
   .replace(/&/g, '&amp;')
@@ -213,13 +217,15 @@ export function renderMarkdown(source) {
     // m flag a plain $ would close the block at the first newline.
     /^ {0,3}(`{3,}|~{3,})([^\n]*)\n?([\s\S]*?)(?:^ {0,3}\1[`~]*[ \t]*$|(?![\s\S]))/gm,
     (m, fence, info, body) => {
-      const lang = escapeHtml(info.trim().split(/\s+/)[0] || '');
-      const code = escapeHtml(body.replace(/\n$/, ''));
+      // The header names what the colours are for, so it reports the language
+      // highlighting actually used — which for an unlabelled fence is the one
+      // detection settled on.
+      const { html, language, pending } = highlightCode(body.replace(/\n$/, ''), info.trim().split(/\s+/)[0] || '');
       blocks.push(
         '<div class="code-block">' +
-          `<div class="code-head"><span>${lang || 'text'}</span>` +
+          `<div class="code-head"><span>${escapeHtml(language)}</span>` +
           '<button class="code-copy" type="button" data-copy>Copy</button></div>' +
-          `<pre><code>${code}</code></pre>` +
+          `<pre><code class="hljs"${pending ? ' data-hl="pending"' : ''}>${html}</code></pre>` +
         '</div>'
       );
       return `\n\u0000B${blocks.length - 1}\u0000\n`;

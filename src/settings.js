@@ -969,7 +969,8 @@ function aboutScreen() {
       // The installed version is @fontsource's packaging, not IBM's own release.
       linkRow('IBM Plex', 'https://www.ibm.com/plex/', 'SIL OFL · via @fontsource'),
       linkRow('WebLLM', 'https://github.com/mlc-ai/web-llm', version('webllm', 'Apache-2.0')),
-    ], 'All four are bundled into the build and served from this origin — none of ' +
+      linkRow('highlight.js', 'https://highlightjs.org', version('hljs', 'BSD-3-Clause')),
+    ], 'All five are bundled into the build and served from this origin — none of ' +
        'them is fetched from a CDN at runtime. WebLLM downloads model weights ' +
        'from HuggingFace, once per model, into Cache Storage.'),
   ]);

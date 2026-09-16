@@ -136,6 +136,19 @@ html[data-bs-core][data-bs-theme="dark"] {
   --n-invert-bg: var(--n-50);
   --n-invert-fg: var(--n-950);
   --n-shadow: rgba(0, 0, 0, .6);
+
+  /* Code colours. The app is grayscale on purpose, so highlighting uses the
+     fewest hues that still separate the parts of a line, all desaturated
+     enough to sit inside a neutral UI rather than shout over it. */
+  --code-comment: var(--n-500);
+  --code-keyword: hsl(265, 32%, 72%);
+  --code-string:  hsl(110, 24%, 66%);
+  --code-number:  hsl(28, 40%, 70%);
+  --code-func:    hsl(205, 34%, 70%);
+  --code-type:    hsl(170, 26%, 66%);
+  --code-meta:    var(--n-400);
+  --code-added:   hsl(110, 26%, 62%);
+  --code-removed: hsl(5, 45%, 68%);
 }
 
 /* ── light ─────────────────────────────────────────────────── */
@@ -193,6 +206,18 @@ html[data-bs-core][data-bs-theme="light"] {
   --n-invert-bg: var(--n-900);
   --n-invert-fg: var(--n-50);
   --n-shadow: rgba(10, 10, 10, .18);
+
+  /* The same hues, darkened and a little stronger: they sit on a light gray
+     block, where a pale tint would read as damaged text rather than colour. */
+  --code-comment: var(--n-500);
+  --code-keyword: hsl(265, 38%, 42%);
+  --code-string:  hsl(120, 40%, 28%);
+  --code-number:  hsl(24, 60%, 34%);
+  --code-func:    hsl(205, 52%, 36%);
+  --code-type:    hsl(175, 48%, 28%);
+  --code-meta:    var(--n-600);
+  --code-added:   hsl(120, 42%, 28%);
+  --code-removed: hsl(5, 54%, 42%);
 }
 
 /* ── Touch scale ───────────────────────────────────────────────

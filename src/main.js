@@ -26,6 +26,7 @@ import * as api from './providers.js';
 import * as bridge from './bridge.js';
 import * as share from './share.js';
 import { renderMarkdown } from './markdown.js';
+import { loadHighlighter, repaintCodeBlocks } from './highlight.js';
 import { openSettings, openProviders, openIntro, openDisclaimer, chooseModel, setShell } from './settings.js';
 import { openMarket } from './market.js';
 import {
@@ -53,7 +54,7 @@ const state = {
   shared: null,      // a share link being previewed; set only by acceptSharedLink
   searchHits: null,
   showArchived: false,   // sidebar toggle: list archived chats instead of live ones
-  openThreads: new Set(), // sidebar groups that are expanded: parent ids or 'orphan'
+  threadView: null,      // sidebar drilled into one chat's threads: that chat's id
   pinned: true,
 };
 
@@ -152,6 +153,12 @@ async function boot() {
   if (!shared && !ready && !greeted) askUnlock();
 
   registerServiceWorker();
+
+  // The syntax grammars are a chunk of their own, fetched after the shell is
+  // up rather than before it. Whatever code is already on screen is coloured
+  // in place when they land; everything rendered after that is coloured as it
+  // is written.
+  loadHighlighter().then(() => repaintCodeBlocks());
 
   // If the bridge went away since last time, the next provider call says so
   // rather than failing as a bare CORS error.
@@ -486,14 +493,32 @@ async function forgetProvider(provider) {
   updateChip();
 }
 
+/* A model belongs to an exchange — a question and the answer it got — not to
+   the chat. Every message records the model it was made with, so a chat whose
+   model changed halfway still reads true message by message. The chat's own
+   model field survives only as the fallback for chats written before that. */
+
+/** The model the last exchange in this chat actually used. */
+const lastUsedModel = () => [...state.messages].reverse().find(m => m.model)?.model || '';
+
+/** What the next message will be sent with: the agent's model when a chat
+    speaks through an agent, else what the chat was last answered with. */
+function nextModel(provider = currentProvider()) {
+  const agent = agentOf(state.conv);
+  if (agent) return agent.model || '';
+  return lastUsedModel() || state.conv?.model || provider?.defaultModel || '';
+}
+
 function updateChip() {
   const agent = agentOf(state.conv);
+  // The chip names the model, not just the agent: changing an agent's model is
+  // otherwise a silent edit, and the chip is the only place the change shows.
   if (agent) {
-    dom.chipText.textContent = agent.model ? agent.name : `${agent.name} · pick a model`;
+    dom.chipText.textContent = agent.model ? `${agent.name} · ${agent.model}` : `${agent.name} · pick a model`;
     return;
   }
   const provider = currentProvider();
-  const model = state.conv?.model || provider?.defaultModel;
+  const model = nextModel(provider);
   dom.chipText.textContent = provider
     ? (model ? `${provider.name} · ${model}` : `${provider.name} · choose a model`)
     : 'Add a provider';
@@ -531,97 +556,100 @@ function renderConvList() {
     (state.searchHits?.has(c.id) ?? false);
   const archivedAll = state.conversations.filter(c => c.archived);
 
-  // Archived chats are out of sight until asked for; the toggle rows swap
-  // between the two views without a sheet.
-  const swapArchived = show => { state.showArchived = show; renderConvList(); };
-  const archRow = (label, show, icon) => el('button', {
-    class: 'conv-item conv-arch-toggle', type: 'button',
-    onclick: () => swapArchived(show),
+  const pool = state.showArchived ? archivedAll : state.conversations.filter(c => !c.archived);
+  const threadsOf = parent => pool.filter(c => c.spawned && c.parentConvId === parent.id);
+
+  // Archived chats, and the threads of one chat, are both views the list
+  // swaps into. Each is left by the same row at the top.
+  const backRow = (label, onclick) => el('button', {
+    class: 'conv-item conv-arch-toggle', type: 'button', onclick,
   }, [el('span', { class: 'conv-item-title' }, [
-    icon ? el('span', { class: `${icon} conv-caret`, 'aria-hidden': 'true' }) : null,
+    el('span', { class: 'ri-arrow-left-line conv-caret', 'aria-hidden': 'true' }),
     label,
   ])]);
+  const archRow = (label, show) => el('button', {
+    class: 'conv-item conv-arch-toggle', type: 'button',
+    onclick: () => { state.showArchived = show; state.threadView = null; renderConvList(); },
+  }, [el('span', { class: 'conv-item-title', text: label })]);
 
-  // Threads the AI opened with its ask-tool live under the chat that asked
-  // for them, behind a click-to-open row — same pattern as the archive.
-  const pool = state.showArchived ? archivedAll : state.conversations.filter(c => !c.archived);
-  const mine = pool.filter(c => !c.spawned && matches(c));
-  const threadsOf = parent => pool.filter(c => c.spawned && c.parentConvId === parent.id && matches(c));
-  // Threads whose parent is gone or not in this view, plus every hit while
-  // searching: they all land in the flat group at the bottom.
-  const orphans = query ? [] : pool.filter(c => c.spawned && matches(c) &&
-    !state.conversations.some(p => p.id === c.parentConvId &&
-      (state.showArchived ? p.archived : !p.archived)));
-  const strays = query
-    ? pool.filter(c => c.spawned && matches(c) &&
-      (!c.parentConvId || !mine.some(p => p.id === c.parentConvId)))
-    : [];
-
-  const convItem = (conv, sub) => el('button', {
-    class: `conv-item${conv.spawned ? ' is-spawned' : ''}${sub ? ' is-sub' : ''}${conv.id === state.conv?.id ? ' is-active' : ''}`,
+  const convItem = conv => el('button', {
+    class: `conv-item${conv.spawned ? ' is-spawned' : ''}${conv.id === state.conv?.id ? ' is-active' : ''}`,
     type: 'button',
     onclick: () => { openConversation(conv.id); closeDrawer(); },
   }, [
     el('span', { class: 'conv-item-title', text: conv.title || 'Untitled' }),
   ]);
 
-  // The thread groups are icon-only: a single caret opens or closes the list
-  // beneath it. The label it replaces ("Agent threads · N") survives as the
-  // tooltip and aria-label, so the control stays explainable without text.
-  const threadsRow = (key, n, open, sub) => el('button', {
-    class: `conv-item conv-arch-toggle conv-threads-toggle${sub ? ' is-sub' : ''}`, type: 'button',
-    title: `Agent threads (${n})`,
-    'aria-label': `Agent threads (${n})`,
-    'aria-expanded': String(open),
-    onclick: () => {
-      if (open) state.openThreads.delete(key);
-      else state.openThreads.add(key);
-      renderConvList();
-    },
-  }, [el('span', {
-    class: `ri-${open ? 'arrow-down-s' : 'arrow-right-s'}-line conv-caret`,
-    'aria-hidden': 'true',
-  })]);
+  // A chat whose agent opened threads carries the count at its right edge.
+  // Tapping the chat still opens the chat; tapping the count drills into that
+  // chat's own list, so threads cost the main list no rows of its own.
+  const convRow = conv => {
+    const n = query ? 0 : threadsOf(conv).length;
+    if (!n) return convItem(conv);
+    return el('div', { class: 'conv-row' }, [
+      convItem(conv),
+      el('button', {
+        class: 'conv-threads-badge', type: 'button',
+        'aria-label': `${n} agent thread${n === 1 ? '' : 's'}`,
+        onclick: () => { state.threadView = conv.id; renderConvList(); },
+      }, [
+        String(n),
+        el('span', { class: 'ri-arrow-right-s-line', 'aria-hidden': 'true' }),
+      ]),
+    ]);
+  };
 
-  if (!mine.length && !orphans.length && !strays.length) {
+  // Drilled into one chat: the chat itself, then what its agent ran, each
+  // under a heading rather than an indent.
+  const parent = state.threadView
+    ? state.conversations.find(c => c.id === state.threadView) || null
+    : null;
+  if (state.threadView && !parent) state.threadView = null;   // the chat is gone
+  if (parent) {
+    // A thread the user carried on talking in can open threads of its own, so
+    // the way back is one level up rather than always all the way out.
+    const up = (parent.spawned && pool.find(c => c.id === parent.parentConvId)) || null;
+    list.append(backRow(up ? (up.title || 'Untitled') : (state.showArchived ? 'Archived' : 'All chats'),
+      () => { state.threadView = up?.id ?? null; renderConvList(); }));
+    list.append(el('div', { class: 'conv-group', text: 'Chat' }));
+    list.append(convItem(parent));
+    const threads = threadsOf(parent);
+    if (threads.length) {
+      list.append(el('div', { class: 'conv-group', text: 'Agent threads' }));
+      for (const t of threads) list.append(convRow(t));
+    }
+    return;
+  }
+
+  // The main list is chats: everything the user started, plus any thread whose
+  // parent is gone from this view and would otherwise be unreachable. A search
+  // flattens the lot — a hit must never hide behind a drill-in.
+  const hasParent = c => c.spawned && pool.some(p => p.id === c.parentConvId);
+  const items = pool.filter(c => matches(c) && (query || !hasParent(c)));
+
+  if (!items.length) {
     list.append(el('p', {
       class: 'conv-empty',
       text: query ? 'Nothing matches' : (state.showArchived ? 'Nothing archived' : 'No chats yet'),
     }));
-    if (state.showArchived) list.append(archRow('All chats', false, 'ri-arrow-left-line'));
+    if (state.showArchived) list.append(backRow('All chats', () => {
+      state.showArchived = false; renderConvList();
+    }));
     return;
   }
 
-  if (state.showArchived) list.append(archRow('All chats', false, 'ri-arrow-left-line'));
+  if (state.showArchived) list.append(backRow('All chats', () => {
+    state.showArchived = false; renderConvList();
+  }));
 
   let group = null;
-  for (const conv of mine) {
+  for (const conv of items) {
     const label = groupLabel(conv.updatedAt);
     if (label !== group) {
       group = label;
       list.append(el('div', { class: 'conv-group', text: label }));
     }
-    list.append(convItem(conv));
-    if (query) continue;              // while searching, threads flatten below
-    const threads = threadsOf(conv);
-    if (threads.length) {
-      const open = state.openThreads.has(conv.id);
-      list.append(threadsRow(conv.id, threads.length, open, true));
-      if (open) for (const t of threads) list.append(convItem(t, true));
-    }
-  }
-  if (orphans.length) {
-    const open = state.openThreads.has('orphan');
-    list.append(threadsRow('orphan', orphans.length, open, false));
-    if (open) for (const t of orphans) list.append(convItem(t, true));
-  }
-  if (strays.length) {
-    // Search can surface threads whose parent is not in this view; they get
-    // the same caret as the other thread groups, open by default so a search
-    // never hides its own results.
-    const open = !state.openThreads.has('strays');
-    list.append(threadsRow('strays', strays.length, open, false));
-    if (open) for (const t of strays) list.append(convItem(t, true));
+    list.append(convRow(conv));
   }
   if (!state.showArchived && archivedAll.length) {
     list.append(archRow(`Archived · ${archivedAll.length}`, true));
@@ -632,6 +660,7 @@ function startDraft() {
   detachStreaming();
   exitSharedPreview();
   state.showArchived = false;          // a new chat belongs in the main list
+  state.threadView = null;
   // New chats speak in agents: the last one used, else the first configured.
   const agent = state.agents.find(a => a.id === state.ui.lastAgentId) || state.agents[0] || null;
   const provider = agent ? providerById(agent.providerId) : (state.providers[0] || null);
@@ -918,7 +947,7 @@ async function handleSubmit(ev) {
   // The agent owns provider and model; a chat without a usable model gets
   // the agent picker, not a dead end.
   const agent = agentOf(state.conv);
-  const model = agent?.model || state.conv.model || provider.defaultModel;
+  const model = nextModel(provider);
   if (!model) { openAgentPicker(); return; }
 
   const { encrypted, unlocked } = vault.status();
@@ -931,13 +960,14 @@ async function handleSubmit(ev) {
   if (state.conv.draft) {
     state.conv.title = text.replace(/\s+/g, ' ').slice(0, 60) || 'Untitled';
     state.conv.providerId = provider.id;
-    state.conv.model = model;
     await persistConversation();
-  } else if (state.conv.model !== model || state.conv.providerId !== provider.id) {
-    await persistConversation({ model, providerId: provider.id });
   }
 
-  const msg = store.newMessage(state.conv.id, 'user', text, nextSeq());
+  // The question carries the model it is being asked of; the reply below it
+  // carries the same. Switching model later leaves both alone.
+  const msg = store.newMessage(state.conv.id, 'user', text, nextSeq(), {
+    model, providerId: provider.id, agentId: agent?.id ?? null,
+  });
   state.messages.push(msg);
   await store.putMessage(msg);
   appendMessage(msg);
@@ -950,7 +980,11 @@ async function runCompletion() {
   const convId = state.conv.id;
   const agent = agentOf(state.conv);
   const provider = agent ? (providerById(agent.providerId) || currentProvider()) : currentProvider();
-  const model = agent?.model || state.conv.model || provider.defaultModel;
+  const model = nextModel(provider) || provider?.defaultModel || '';
+
+  // Retry and edit re-ask with whatever is selected now, so the question is
+  // restamped with the model that actually answers it.
+  await stampAsk({ model, providerId: provider?.id ?? null, agentId: agent?.id ?? null });
 
   const controller = new AbortController();
   state.streaming = { controller, id: null, convId };
@@ -980,7 +1014,7 @@ async function runCompletion() {
     let ran = 0;   // tool executions so far in this reply
     for (;;) {
       const assistant = store.newMessage(convId, 'assistant', '', nextSeq(), {
-        model, providerId: provider.id, pending: true,
+        model, providerId: provider.id, agentId: agent?.id ?? null, pending: true,
       });
       current = assistant;
       state.streaming.id = assistant.id;
@@ -1102,6 +1136,17 @@ function stopStreaming() {
 function detachStreaming() {
   if (!state.streaming) return;
   setBusy(false);
+}
+
+/** Keep a question and its answer on the same model: the last question in the
+    chat records what is about to answer it. */
+async function stampAsk(stamp) {
+  const ask = [...state.messages].reverse().find(m => m.role === 'user');
+  if (!ask) return;
+  if (ask.model === stamp.model && ask.providerId === stamp.providerId &&
+      (ask.agentId ?? null) === stamp.agentId) return;
+  Object.assign(ask, stamp);
+  await store.putMessage(ask);
 }
 
 async function truncateFrom(index) {
@@ -1816,6 +1861,7 @@ async function unarchiveAll() {
   if (!ok) return;
   for (const c of targets) { c.archived = false; await store.putConversation(c); }
   state.showArchived = false;
+  state.threadView = null;
   await refreshConversations();
   closeSheet();
   toast('All chats unarchived');
@@ -1829,6 +1875,7 @@ async function deleteEverything() {
   });
   if (!ok) return;
   state.showArchived = false;
+  state.threadView = null;
   await shell.deleteAllChats();
   closeSheet();
   toast('All chats deleted');
@@ -1953,6 +2000,7 @@ function bindEvents() {
   dom.search.addEventListener('input', debounce(async ev => {
     const q = ev.target.value.trim().toLowerCase();
     state.searchHits = null;
+    state.threadView = null;            // a search is over every chat, not one
     if (q.length >= 2) {
       const all = await store.allMessages();
       state.searchHits = new Set(
