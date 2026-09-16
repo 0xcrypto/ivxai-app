@@ -1107,7 +1107,7 @@ function agentsScreen() {
       // editor instead of pointing a chat at a dead end.
       onclick: () => agent.model
         ? useAgent(agent)
-        : pushScreen({ title: agent.name, render: () => agentEditorScreen(agent) }),
+        : pushScreen(agentEditorScreen(agent)),
     }, [
       el('span', { class: 'item-main' }, [
         el('span', { class: 'item-title', text: agent.name }),
@@ -1126,7 +1126,7 @@ function agentsScreen() {
     el('div', { class: 'group' }, [
       el('div', { class: 'item-list' }, [
         el('button', { class: 'item', type: 'button',
-          onclick: () => pushScreen({ title: 'New agent', render: () => agentEditorScreen(null) }),
+          onclick: () => pushScreen(agentEditorScreen(null)),
         }, [
           el('span', { class: 'item-main' }, [el('span', { class: 'item-title', text: 'New agent' })]),
           el('span', { class: 'item-chevron', text: '›' }),
@@ -1156,7 +1156,7 @@ async function editAgentPrompt() {
   });
   if (!id) return;
   const agent = agentById(id);
-  if (agent) pushScreen({ title: agent.name, render: () => agentEditorScreen(agent) });
+  if (agent) pushScreen(agentEditorScreen(agent));
 }
 
 /** Point the current chat at an agent. The chat's own provider/model fields
@@ -1172,6 +1172,12 @@ async function useAgent(agent) {
   closeSheet();
 }
 
+/* The agent editor keeps unsaved edits in a draft, so it cannot re-derive that
+   draft on every render: the sheet repaints in place after refreshSheet(), and
+   paints again when a pushed screen (the model chooser) pops back — re-deriving
+   there silently undid every pick the user had made, which is why an edited
+   model could be saved as if it had never been chosen. The draft is therefore
+   created once, when the screen is pushed, and lives on the returned object. */
 function agentEditorScreen(agent) {
   const isNew = !agent;
   const draft = agent ? { ...agent } : {
@@ -1271,7 +1277,7 @@ function agentEditorScreen(agent) {
     popScreen();
   };
 
-  return el('div', {}, [
+  const render = () => el('div', {}, [
     el('div', { class: 'group' }, [
       el('div', { class: 'item' }, [field('Name', nameInput)]),
       providerRow,
@@ -1323,6 +1329,11 @@ function agentEditorScreen(agent) {
       ]),
     ]),
   ]);
+
+  return {
+    title: isNew ? 'New agent' : agent.name,
+    render,
+  };
 }
 
 async function deleteAgentFlow(agent) {
@@ -1409,7 +1420,7 @@ function chatSettingsScreen() {
             el('span', { class: 'item-chevron', text: '›' }),
           ]),
           el('button', { class: 'item', type: 'button',
-            onclick: () => pushScreen({ title: agent.name, render: () => agentEditorScreen(agent) }),
+            onclick: () => pushScreen(agentEditorScreen(agent)),
           }, [
             el('span', { class: 'item-main' }, [
               el('span', { class: 'item-title', text: 'Edit agent' }),
@@ -1812,7 +1823,7 @@ const shell = {
   forgetProvider,
   agentScreens: {
     picker: () => ({ title: 'Agents', render: agentsScreen }),
-    editor: agent => ({ title: agent ? agent.name : 'New agent', render: () => agentEditorScreen(agent) }),
+    editor: agent => agentEditorScreen(agent),
   },
   getUI: () => state.ui,
   setUI: saveUI,
