@@ -187,24 +187,21 @@ export async function importShared(bundle) {
   return conv.id;
 }
 
-/* Shorteners tried in order; the first to answer wins. Each is a plain GET
-   and goes through the CORS bridge like every other provider call, so the
-   bridge rescues the ones a browser refuses to talk to directly. */
-const SHORTENERS = [
-  { name: 'is.gd',   api: u => `https://is.gd/create.php?format=json&url=${encodeURIComponent(u)}`, pick: t => JSON.parse(t).shorturl },
-  { name: 'v.gd',    api: u => `https://v.gd/create.php?format=json&url=${encodeURIComponent(u)}`,  pick: t => JSON.parse(t).shorturl },
-  { name: 'TinyURL', api: u => `https://tinyurl.com/api-create.php?url=${encodeURIComponent(u)}`,   pick: t => t.trim() },
-];
-
+/* TinyURL is the one shortener, and it is opt-in: shortening hands the whole
+   link — and the chat rides inside it — to a third party. The toggle lives
+   under Settings → Privacy & data; the caller hides the button while it is
+   off, and no shortener is ever contacted without it. */
 export async function shortenUrl(url) {
-  for (const s of SHORTENERS) {
-    const [endpoint] = bridge.apply(s.api(url), {});
-    try {
-      const res = await fetch(endpoint);
-      if (!res.ok) continue;
-      const short = s.pick(await res.text());
-      if (short) return { short, name: s.name };
-    } catch { /* refused, opaque, or malformed — try the next */ }
+  const [endpoint] = bridge.apply(
+    `https://tinyurl.com/api-create.php?url=${encodeURIComponent(url)}`, {});
+  try {
+    const res = await fetch(endpoint);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const short = (await res.text()).trim();
+    if (!short) throw new Error('empty answer');
+    return { short, name: 'TinyURL' };
+  } catch (err) {
+    throw new Error(`TinyURL did not answer from the browser (${err.message}). ` +
+      'Copy the full link and paste it into tinyurl.com instead.');
   }
-  throw new Error('No shortener answered from the browser. Copy the full link and paste it into is.gd or tinyurl.com instead.');
 }

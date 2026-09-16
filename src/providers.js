@@ -20,8 +20,8 @@ export const PRESETS = [
   // once the weights are in. It is the default so a fresh install can chat
   // without configuring anything.
   { key: 'webllm',     name: 'WebLLM',            kind: 'webllm',    baseUrl: '', needsKey: false, local: true,
-    defaultModel: 'SmolLM2-135M-Instruct-q0f16-MLC', models: ['SmolLM2-135M-Instruct-q0f16-MLC'],
-    hint: 'Runs the model inside this browser on WebGPU. The first message downloads it once (from HuggingFace) and caches it on disk.' },
+    defaultModel: 'gemma-2-2b-it-q4f32_1-MLC', models: ['gemma-2-2b-it-q4f32_1-MLC'],
+    hint: 'Runs the model inside this browser on WebGPU. The default (Gemma 2 2B) downloads about 1.5 GB on first use, from HuggingFace, and is cached on disk.' },
   // Local runtimes next: nothing typed into these ever leaves the machine.
   { key: 'ollama',     name: 'Ollama',            kind: 'ollama',    baseUrl: 'http://localhost:11434', needsKey: false, local: true,
     hint: "Ollama blocks browser origins by default. Start it with OLLAMA_ORIGINS set, e.g. OLLAMA_ORIGINS='*' ollama serve" },
@@ -216,7 +216,7 @@ async function* sseData(response, signal) {
 /* ── WebLLM: the model runs in this browser, on WebGPU ─────── */
 
 let webllmLib = null;
-const webllmEngines = new Map();   // model id -> engine, or the promise loading it
+const webllmEngines = new Map();   // model id -> { promise, state, listeners }
 
 /** The library is code-split and imported only when a WebLLM call needs it:
     it is far too heavy to pay for at boot of an app that may never use it. */
@@ -233,31 +233,58 @@ export async function webllmModelList() {
 }
 
 /** One engine per model, warm for the life of the page. The promise is cached
-    so two chats starting at once share one download instead of racing. */
+    so two chats starting at once share one download instead of racing; the
+    latest download state travels with it, so someone joining mid-download
+    sees real progress immediately. */
 function webllmEngine(model) {
-  let engine = webllmEngines.get(model);
-  if (!engine) {
-    engine = (async () => {
+  let entry = webllmEngines.get(model);
+  if (!entry) {
+    entry = { state: { progress: 0, text: 'Preparing the download…' }, listeners: new Set(), promise: null };
+    entry.promise = (async () => {
       if (!navigator.gpu) {
         throw new ProviderError('This browser has no WebGPU, and WebLLM runs the model inside the browser on WebGPU.');
       }
       const lib = await webllmLoad();
-      return lib.CreateMLCEngine(model);
+      return lib.CreateMLCEngine(model, {
+        initProgressCallback: report => {
+          entry.state.progress = report?.progress ?? 0;
+          entry.state.text = report?.text || '';
+          entry.listeners.forEach(fn => fn(entry.state));
+        },
+      });
     })();
-    webllmEngines.set(model, engine);
+    webllmEngines.set(model, entry);
     // A failed load must not be remembered as a success, or retrying never
     // actually retries.
-    engine.catch(() => webllmEngines.delete(model));
+    entry.promise.catch(() => webllmEngines.delete(model));
   }
-  return engine;
+  return entry;
 }
 
-async function streamWebLLM({ model, system, messages, temperature, maxTokens, signal, push, result }) {
-  const engine = await webllmEngine(model);
+/** One line for the chat bubble while the model loads: WebLLM's own report
+    already names the stage and its percentage, so pass it through. */
+function webllmStatusText(state) {
+  const text = String(state.text || '').trim();
+  return text ? text.slice(0, 140) : `Loading model… ${Math.round((state.progress || 0) * 100)}%`;
+}
+
+async function streamWebLLM({ model, system, messages, temperature, maxTokens, signal, onStatus, push, result }) {
+  const entry = webllmEngine(model);
+  const onProgress = state => onStatus?.(webllmStatusText(state));
+  entry.listeners.add(onProgress);
   // WebLLM takes no AbortSignal; stopping generation is its own call.
-  const interrupt = () => { engine.interruptGenerate().catch(() => { /* engine already gone */ }); };
+  const interrupt = () => { entry.promise.then(
+    engine => engine.interruptGenerate().catch(() => { /* engine already gone */ }),
+    () => { /* load failed; nothing to interrupt */ },
+  ); };
   signal?.addEventListener('abort', interrupt);
   try {
+    onProgress(entry.state);
+    const engine = await entry.promise;
+    // An abort that happened while the engine was still loading only becomes
+    // visible here; without this check the load would finish and generate
+    // into a chat the user already left.
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const chunks = await engine.chat.completions.create({
       messages: system ? [{ role: 'system', content: system }, ...messages] : messages,
       stream: true,
@@ -319,7 +346,7 @@ export async function listModels(provider, apiKey, signal) {
  * Resolves with { text, reasoning, usage, model }.
  */
 export async function streamChat({ provider, apiKey, model, system, messages, temperature,
-                                   maxTokens, signal, onDelta }) {
+                                   maxTokens, signal, onDelta, onStatus }) {
   const base = trimSlash(provider.baseUrl);
   if (!base && provider.kind !== 'webllm') throw new ProviderError('No base URL configured');
   if (!model) throw new ProviderError('Pick a model first');
@@ -333,7 +360,7 @@ export async function streamChat({ provider, apiKey, model, system, messages, te
   };
 
   if (provider.kind === 'webllm') {
-    await streamWebLLM({ model, system, messages, temperature, maxTokens, signal, push, result });
+    await streamWebLLM({ model, system, messages, temperature, maxTokens, signal, onStatus, push, result });
     return result;
   }
 

@@ -108,6 +108,25 @@ async function boot() {
     await saveAgents();
   }
 
+  // A preset's default model can change between versions (WebLLM moved to
+  // Gemma 2 2B); agents still only following the provider default move with
+  // it. Agents with a model of their own choosing are untouched.
+  let migrated = false;
+  for (const agent of state.agents) {
+    const agentProvider = providerById(agent.providerId);
+    if (!agentProvider) continue;
+    if (agentProvider.kind === 'webllm' && agent.tools === undefined) {
+      agent.tools = false;   // small in-browser models cannot follow the ask protocol
+      migrated = true;
+    }
+    if (agentProvider.defaultModel &&
+        agent.modelFromProvider === true && agent.model !== agentProvider.defaultModel) {
+      agent.model = agentProvider.defaultModel;
+      migrated = true;
+    }
+  }
+  if (migrated) await saveAgents();
+
   bindEvents();
   setShell(shell);
   await refreshConversations();
@@ -260,6 +279,9 @@ const newAgentFor = provider => ({
   // explicit pick in the agent editor sets it false and the agent then keeps
   // its model across provider default changes.
   modelFromProvider: true,
+  // Most WebLLM models are too small to follow the ask-tool protocol, so they
+  // start with it off; the agent editor turns it back on when wanted.
+  ...(provider.kind === 'webllm' ? { tools: false } : {}),
   systemPrompt: state.defaults.systemPrompt || '',
   temperature: state.defaults.temperature,
   maxTokens: state.defaults.maxTokens,
@@ -412,6 +434,14 @@ async function attachDefaultAgent(provider, previousModel = '') {
     await saveAgents();
     saveUI({ lastAgentId: agent.id });
   } else {
+    let changed = false;
+    // Agents created before per-provider tool defaults have none at all. Small
+    // WebLLM models cannot follow the ask-tool protocol, so unless the user
+    // has said otherwise, they start with it off.
+    if (provider.kind === 'webllm' && agent.tools === undefined) {
+      agent.tools = false;
+      changed = true;
+    }
     // The agent's model follows the provider's default until the user picked
     // one on the agent itself (modelFromProvider === false). Agents saved
     // before that flag existed are treated as inherited only when their model
@@ -424,8 +454,9 @@ async function attachDefaultAgent(provider, previousModel = '') {
     if (follows) {
       agent.model = provider.defaultModel;
       agent.modelFromProvider = true;
-      await saveAgents();
+      changed = true;
     }
+    if (changed) await saveAgents();
   }
   if (state.conv?.draft && !state.conv.agentId) {
     state.conv.agentId = agent.id;
@@ -534,20 +565,23 @@ function renderConvList() {
     el('span', { class: 'conv-item-title', text: conv.title || 'Untitled' }),
   ]);
 
+  // The thread groups are icon-only: a single caret opens or closes the list
+  // beneath it. The label it replaces ("Agent threads · N") survives as the
+  // tooltip and aria-label, so the control stays explainable without text.
   const threadsRow = (key, n, open, sub) => el('button', {
-    class: `conv-item conv-arch-toggle${sub ? ' is-sub' : ''}`, type: 'button',
+    class: `conv-item conv-arch-toggle conv-threads-toggle${sub ? ' is-sub' : ''}`, type: 'button',
+    title: `Agent threads (${n})`,
+    'aria-label': `Agent threads (${n})`,
+    'aria-expanded': String(open),
     onclick: () => {
       if (open) state.openThreads.delete(key);
       else state.openThreads.add(key);
       renderConvList();
     },
-  }, [el('span', { class: 'conv-item-title' }, [
-    el('span', {
-      class: `ri-${open ? 'arrow-down-s' : 'arrow-right-s'}-line conv-caret`,
-      'aria-hidden': 'true',
-    }),
-    `Agent threads · ${n}`,
-  ])]);
+  }, [el('span', {
+    class: `ri-${open ? 'arrow-down-s' : 'arrow-right-s'}-line conv-caret`,
+    'aria-hidden': 'true',
+  })]);
 
   if (!mine.length && !orphans.length && !strays.length) {
     list.append(el('p', {
@@ -582,8 +616,12 @@ function renderConvList() {
     if (open) for (const t of orphans) list.append(convItem(t, true));
   }
   if (strays.length) {
-    list.append(el('div', { class: 'conv-group', text: `Agent threads · ${strays.length}` }));
-    for (const t of strays) list.append(convItem(t, true));
+    // Search can surface threads whose parent is not in this view; they get
+    // the same caret as the other thread groups, open by default so a search
+    // never hides its own results.
+    const open = !state.openThreads.has('strays');
+    list.append(threadsRow('strays', strays.length, open, false));
+    if (open) for (const t of strays) list.append(convItem(t, true));
   }
   if (!state.showArchived && archivedAll.length) {
     list.append(archRow(`Archived · ${archivedAll.length}`, true));
@@ -748,13 +786,17 @@ function paintBody(body, msg) {
   body.append(holder);
 
   if (msg.pending && !visible) {
-    holder.append(el('span', { class: 'caret' }));
+    // A model still loading (WebLLM downloads weights on first use) gets a
+    // line of live progress instead of a bare caret.
+    holder.append(msg.status
+      ? el('p', { class: 'msg-note', text: msg.status })
+      : el('span', { class: 'caret' }));
   } else if (!visible && !msg.reasoning && !msg.intermediate) {
-    // Reasoning models sometimes spend the whole budget thinking and return no
-    // answer; without this the message just looks blank.
-    body.append(el('p', { class: 'msg-note', text: msg.reasoning
-      ? 'Only reasoning came back, no answer. Retry, or raise the token limit.'
-      : 'The model returned an empty response.' }));
+    // A reply that finished without a word shows as still thinking, not as
+    // an error line.
+    holder.append(el('span', { class: 'thinking' }, [
+      el('span'), el('span'), el('span'),
+    ]));
   }
 }
 
@@ -959,14 +1001,19 @@ async function runCompletion() {
         maxTokens: agent ? agent.maxTokens : state.conv.maxTokens,
         signal: controller.signal,
         onDelta: ({ text, reasoning }) => {
+          if (text || reasoning) delete assistant.status;   // loading hint is over
           assistant.content += text;
           if (reasoning) assistant.reasoning = (assistant.reasoning || '') + reasoning;
           repaint();
         },
+        // WebLLM reports model-download progress here; the hint shows in the
+        // pending reply so the wait has a visible reason.
+        onStatus: hint => { assistant.status = hint; repaint(); },
       });
       assistant.content = result.text || assistant.content;
       assistant.usage = result.usage;
       delete assistant.pending;
+      delete assistant.status;
       await store.putMessage(assistant);
       current = null;
       if (state.conv?.id === convId) {
@@ -1008,6 +1055,7 @@ async function runCompletion() {
         toast(assistant.error, 'err', 9000);
       }
       delete assistant.pending;
+      delete assistant.status;
       await store.putMessage(assistant);
       if (state.conv?.id === convId) {
         nodeFor(assistant.id)?.replaceWith(messageNode(assistant));
@@ -1191,11 +1239,21 @@ function agentEditorScreen(agent) {
     draft.providerId = state.providers[0].id;
     draft.name = state.providers[0].name;
   }
+  if (isNew && providerById(draft.providerId)?.kind === 'webllm') {
+    draft.tools = false;
+  }
 
   const nameInput = el('input', {
     class: 'form-control', type: 'text', value: draft.name, placeholder: 'Name',
     onchange: ev => { draft.name = ev.target.value.trim(); },
   });
+
+  // Value labels live outside render() and are updated imperatively: the
+  // editor reuses its DOM across repaints (the draft is the persistent state),
+  // so a refreshSheet() would just re-append stale text. Same pattern as
+  // tempValue below.
+  const providerValue = el('span', { class: 'item-value', text: providerById(draft.providerId)?.name || 'None' });
+  const modelValue = el('span', { class: 'item-value', text: draft.model || 'Not set' });
 
   const providerRow = el('button', {
     class: 'item', type: 'button',
@@ -1208,11 +1266,14 @@ function agentEditorScreen(agent) {
       if (!id || id === draft.providerId) return;
       draft.providerId = id;
       draft.model = '';   // a model from the old provider means nothing here
-      refreshSheet();
+      // WebLLM models get tools off by default; anything else keeps the draft's.
+      if (providerById(id)?.kind === 'webllm') { draft.tools = false; toolsSwitch.checked = false; }
+      providerValue.textContent = providerById(id)?.name || 'None';
+      modelValue.textContent = draft.model || 'Not set';
     },
   }, [
     el('span', { class: 'item-main' }, [el('span', { class: 'item-title', text: 'Provider' })]),
-    el('span', { class: 'item-value', text: providerById(draft.providerId)?.name || 'None' }),
+    providerValue,
     el('span', { class: 'item-chevron', text: '›' }),
   ]);
 
@@ -1226,11 +1287,11 @@ function agentEditorScreen(agent) {
       draft.model = model;
       // Picked by hand: no longer inherited from the provider's default.
       draft.modelFromProvider = false;
-      refreshSheet();
+      modelValue.textContent = model;
     },
   }, [
     el('span', { class: 'item-main' }, [el('span', { class: 'item-title', text: 'Model' })]),
-    el('span', { class: 'item-value', text: draft.model || 'Not set' }),
+    modelValue,
     el('span', { class: 'item-chevron', text: '›' }),
   ]);
 
@@ -1609,9 +1670,12 @@ function shareScreen(url, base) {
         'device will not reach your instance — set a public base URL under ' +
         'Settings → Sharing, or export the chat as a file instead.' })
     : null;
+  // Shortening hands the chat to a third party, so it happens only when the
+  // user has opted in under Privacy & data.
+  const shortenOn = Boolean(state.ui.shareShortener);
 
   const result = el('div');
-  const shortenBtn = el('button', {
+  const shortenBtn = shortenOn ? el('button', {
     class: 'btn btn-primary btn-block', type: 'button', text: 'Shorten the link',
     onclick: async () => {
       shortenBtn.disabled = true;
@@ -1642,7 +1706,7 @@ function shareScreen(url, base) {
         );
       }
     },
-  });
+  }) : null;
 
   return el('div', {}, [
     el('p', { class: 'group-note', text: 'The whole conversation is zipped and encoded into this link. The app uploads nothing — but anyone who has the link, including a shortener, can read the chat.' }),
@@ -1656,7 +1720,9 @@ function shareScreen(url, base) {
                     onclick: async () => toast(await copyText(url) ? 'Copied' : 'Copy failed') }),
     ]),
     el('p', { class: 'group-note', text: `${url.length} characters (~${kb} KB).${hint ? ' ' + hint : ''}` }),
-    el('p', { class: 'group-note', text: 'Chat links are usually too long to paste around. A shortener trims them down — it will see the chat, since the chat rides inside the URL.' }),
+    shortenOn
+      ? el('p', { class: 'group-note', text: 'Chat links are usually too long to paste around. Shortening sends the link — the chat rides inside it — to TinyURL, which is why it stays opt-in under Privacy & data.' })
+      : el('p', { class: 'group-note', text: 'Automatic shortening is off: it would send this chat to a third party. Turn TinyURL shortening on under Settings → Privacy & data, or copy the full link as it is — it works everywhere as it is.' }),
     shortenBtn,
     result,
   ]);

@@ -756,6 +756,18 @@ function privacyScreen() {
         ? 'AES-GCM with a PBKDF2-derived key. The key lives in memory only, so you unlock once per session.'
         : 'Keys currently sit in IndexedDB in the clear, readable by anyone who can use this browser unlocked.'),
 
+    group('Sharing', [
+      switchRow('Shorten share links with TinyURL', Boolean(app.getUI().shareShortener),
+        checked => {
+          app.setUI({ shareShortener: checked });
+          toast(checked
+            ? 'Share links may be sent to tinyurl.com to be shortened'
+            : 'Share links stay in the browser — copy the full link instead', 'ok');
+        }),
+    ], 'Off by default. Shortening hands the whole link — the chat rides ' +
+       'inside it — to tinyurl.com. The full link always works without any ' +
+       'third party.'),
+
     group('Backup', [
       actionRow('Export everything', { sub: 'Chats, providers and settings', onclick: () => exportAll(false) }),
       actionRow('Export including API keys', { sub: 'The file will contain your secrets', onclick: () => exportAll(true) }),

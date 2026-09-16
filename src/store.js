@@ -203,6 +203,7 @@ const UI_DEFAULTS = {
   lastConvId: null,
   lastAgentId: null,
   shareBaseUrl: '',
+  shareShortener: false,
 };
 
 export function loadUI() {
