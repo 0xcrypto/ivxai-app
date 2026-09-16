@@ -2,7 +2,7 @@
 // Copyright (C) 2026 0xcrypto
 
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, posix, relative, sep } from 'node:path';
 import { defineConfig } from 'vite';
@@ -55,6 +55,11 @@ function serviceWorkerPrecache() {
         // that can run this app will ever ask for it, so keep it out of the
         // install payload.
         .filter(f => !f.endsWith('.woff'))
+        // A code-split vendor chunk can dwarf the whole shell (WebLLM's is
+        // ~6 MB). Precaching it would tax every install with bytes most users
+        // never touch; it stays an ordinary same-origin asset, so the fetch
+        // handler caches it on first use instead of at install.
+        .filter(f => !f.endsWith('.js') || statSync(join(outDir, f)).size <= PRECACHE_MAX_BYTES)
         .sort();
 
       const urls = files.map(f => `${base}${f}`.replace(/\/{2,}/g, '/'));
@@ -119,6 +124,10 @@ const installed = name => {
   }
 };
 
+/* Chunks bigger than this are left out of the service worker's install
+   manifest and cached on first use instead — see the filter above. */
+const PRECACHE_MAX_BYTES = 2 * 1024 * 1024;
+
 export default defineConfig({
   define: {
     __VERSIONS__: JSON.stringify({
@@ -126,6 +135,7 @@ export default defineConfig({
       vite: installed('vite'),
       halfmoon: installed('halfmoon'),
       plex: installed('@fontsource/ibm-plex-sans'),
+      webllm: installed('@mlc-ai/web-llm'),
     }),
   },
   // Relative base so the build can be dropped in any directory of any host.

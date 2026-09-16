@@ -65,7 +65,7 @@ export function actionSnack(message, actionLabel, { onAction, onDismiss } = {}) 
       onclick: () => onAction?.(),
     }),
     el('button', {
-      class: 'snack-ask-x', type: 'button', text: '\u00d7',
+      class: 'snack-ask-x ri-close-line', type: 'button',
       'aria-label': 'Dismiss',
       onclick: () => { item.remove(); onDismiss?.(); },
     }),

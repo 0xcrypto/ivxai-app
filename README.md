@@ -17,13 +17,17 @@ stay in your browser.
 
 ## Private by default
 
-- **No third-party code at runtime.** Halfmoon CSS and IBM Plex are npm
+- **No third-party code at runtime.** Halfmoon CSS, IBM Plex and WebLLM are npm
   dependencies bundled into the build and served from your own origin. No CDNs,
   no Google Fonts, no trackers, no analytics, no telemetry.
-- **A Content-Security-Policy that enforces it.** `script-src 'self'` — the page
-  cannot execute code from anywhere else, even if something tried.
+- **A Content-Security-Policy that enforces it.** `script-src 'self'
+  'wasm-unsafe-eval'` — the page cannot execute code from anywhere else, and
+  no `eval()`/`new Function()` is allowed; the second source exists only so
+  WebLLM can compile its WebAssembly in the browser.
 - **Only the requests you asked for.** Chat completions and model lists, to the
-  base URL you configured. Check it in the Network panel.
+  base URL you configured. Check it in the Network panel. The WebLLM provider
+  is the one exception to look for: it downloads the chosen model's weights
+  from HuggingFace once and then answers entirely in this browser.
 - **Your data stays put.** Conversations and messages live in IndexedDB. Keys
   live there too, optionally encrypted with a passphrase you choose.
 
@@ -50,12 +54,16 @@ keep it as an app; after the first load it works offline.
 
 ## Providers
 
-Open **Settings → Providers**. Ollama and OpenRouter are seeded; add more from
-the preset list, or point "Custom OpenAI-compatible" at anything speaking the
-OpenAI chat API. Paste a key, then **Fetch models**.
+Open **Settings → Providers**. WebLLM, Ollama, LM Studio and OpenRouter are
+seeded; add more from the preset list, or point "Custom OpenAI-compatible" at
+anything speaking the OpenAI chat API. Paste a key, then **Fetch models**.
+
+WebLLM is first on the list and needs no configuration: the model runs inside
+this browser on WebGPU, so a fresh install can chat before anything is set up.
 
 | Provider | Base URL | Key |
 | --- | --- | --- |
+| WebLLM | none — runs in this browser | not needed |
 | Ollama | `http://localhost:11434` | not needed |
 | LM Studio | `http://localhost:1234/v1` | not needed |
 | llama.cpp | `http://localhost:8080/v1` | not needed |

@@ -202,6 +202,7 @@ const UI_DEFAULTS = {
   sendOnEnter: true,
   lastConvId: null,
   lastAgentId: null,
+  shareBaseUrl: '',
 };
 
 export function loadUI() {

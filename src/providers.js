@@ -7,12 +7,22 @@
    The one detour is the CORS bridge (./bridge.js): when it is switched on, the
    URL is rewritten to travel via a daemon on this machine. That is still the
    user's endpoint and the user's key — it is how you reach a server that will
-   not answer a browser directly. `bridge.apply` is a no-op while it is off. */
+   not answer a browser directly. `bridge.apply` is a no-op while it is off.
+
+   The one exception to the rule above is WebLLM: there is no endpoint, the
+   model is downloaded once into this browser and every completion is computed
+   here, on WebGPU. Nothing leaves the machine once the weights are cached. */
 
 import * as bridge from './bridge.js';
 
 export const PRESETS = [
-  // Local runtimes first: nothing typed into these ever leaves the machine.
+  // In-browser runtime first: no server, no key, no account, and no traffic
+  // once the weights are in. It is the default so a fresh install can chat
+  // without configuring anything.
+  { key: 'webllm',     name: 'WebLLM',            kind: 'webllm',    baseUrl: '', needsKey: false, local: true,
+    defaultModel: 'SmolLM2-135M-Instruct-q0f16-MLC', models: ['SmolLM2-135M-Instruct-q0f16-MLC'],
+    hint: 'Runs the model inside this browser on WebGPU. The first message downloads it once (from HuggingFace) and caches it on disk.' },
+  // Local runtimes next: nothing typed into these ever leaves the machine.
   { key: 'ollama',     name: 'Ollama',            kind: 'ollama',    baseUrl: 'http://localhost:11434', needsKey: false, local: true,
     hint: "Ollama blocks browser origins by default. Start it with OLLAMA_ORIGINS set, e.g. OLLAMA_ORIGINS='*' ollama serve" },
   { key: 'lmstudio',   name: 'LM Studio',         kind: 'openai',    baseUrl: 'http://localhost:1234/v1', needsKey: false, local: true,
@@ -88,6 +98,7 @@ export const KINDS = [
   { value: 'openai', label: 'OpenAI-compatible' },
   { value: 'anthropic', label: 'Anthropic' },
   { value: 'ollama', label: 'Ollama' },
+  { value: 'webllm', label: 'WebLLM (runs in this browser)' },
 ];
 
 const trimSlash = url => String(url || '').replace(/\/+$/, '');
@@ -202,9 +213,80 @@ async function* sseData(response, signal) {
   }
 }
 
+/* ── WebLLM: the model runs in this browser, on WebGPU ─────── */
+
+let webllmLib = null;
+const webllmEngines = new Map();   // model id -> engine, or the promise loading it
+
+/** The library is code-split and imported only when a WebLLM call needs it:
+    it is far too heavy to pay for at boot of an app that may never use it. */
+async function webllmLoad() {
+  webllmLib ??= await import('@mlc-ai/web-llm');
+  return webllmLib;
+}
+
+/** Every model id the bundled WebLLM knows, straight from its prebuilt config. */
+export async function webllmModelList() {
+  const lib = await webllmLoad();
+  return [...new Set(lib.prebuiltAppConfig.model_list.map(m => m.model_id))]
+    .sort((a, b) => a.localeCompare(b));
+}
+
+/** One engine per model, warm for the life of the page. The promise is cached
+    so two chats starting at once share one download instead of racing. */
+function webllmEngine(model) {
+  let engine = webllmEngines.get(model);
+  if (!engine) {
+    engine = (async () => {
+      if (!navigator.gpu) {
+        throw new ProviderError('This browser has no WebGPU, and WebLLM runs the model inside the browser on WebGPU.');
+      }
+      const lib = await webllmLoad();
+      return lib.CreateMLCEngine(model);
+    })();
+    webllmEngines.set(model, engine);
+    // A failed load must not be remembered as a success, or retrying never
+    // actually retries.
+    engine.catch(() => webllmEngines.delete(model));
+  }
+  return engine;
+}
+
+async function streamWebLLM({ model, system, messages, temperature, maxTokens, signal, push, result }) {
+  const engine = await webllmEngine(model);
+  // WebLLM takes no AbortSignal; stopping generation is its own call.
+  const interrupt = () => { engine.interruptGenerate().catch(() => { /* engine already gone */ }); };
+  signal?.addEventListener('abort', interrupt);
+  try {
+    const chunks = await engine.chat.completions.create({
+      messages: system ? [{ role: 'system', content: system }, ...messages] : messages,
+      stream: true,
+      stream_options: { include_usage: true },
+      ...(temperature != null ? { temperature } : {}),
+      ...(maxTokens ? { max_tokens: maxTokens } : {}),
+    });
+    for await (const chunk of chunks) {
+      if (chunk.usage) {
+        result.usage = {
+          promptTokens: chunk.usage.prompt_tokens ?? null,
+          completionTokens: chunk.usage.completion_tokens ?? null,
+        };
+      }
+      const delta = chunk.choices?.[0]?.delta || {};
+      push(delta.content, delta.reasoning_content);
+    }
+    // Other providers surface a stop as AbortError from the fetch; interrupting
+    // WebLLM merely ends the stream, so raise it here to keep the one meaning.
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  } finally {
+    signal?.removeEventListener('abort', interrupt);
+  }
+}
+
 /* ── model listing ─────────────────────────────────────────── */
 
 export async function listModels(provider, apiKey, signal) {
+  if (provider.kind === 'webllm') return webllmModelList();
   const base = trimSlash(provider.baseUrl);
   if (!base) throw new ProviderError('No base URL configured');
   const url = provider.kind === 'ollama' ? `${base}/api/tags`
@@ -239,7 +321,7 @@ export async function listModels(provider, apiKey, signal) {
 export async function streamChat({ provider, apiKey, model, system, messages, temperature,
                                    maxTokens, signal, onDelta }) {
   const base = trimSlash(provider.baseUrl);
-  if (!base) throw new ProviderError('No base URL configured');
+  if (!base && provider.kind !== 'webllm') throw new ProviderError('No base URL configured');
   if (!model) throw new ProviderError('Pick a model first');
 
   const emit = (text, reasoning) => onDelta?.({ text: text || '', reasoning: reasoning || '' });
@@ -249,6 +331,11 @@ export async function streamChat({ provider, apiKey, model, system, messages, te
     if (reasoning) result.reasoning += reasoning;
     if (text || reasoning) emit(text, reasoning);
   };
+
+  if (provider.kind === 'webllm') {
+    await streamWebLLM({ model, system, messages, temperature, maxTokens, signal, push, result });
+    return result;
+  }
 
   let url, body;
   if (provider.kind === 'ollama') {
@@ -349,9 +436,9 @@ export function makeProvider(preset) {
     kind: preset.kind,
     baseUrl: preset.baseUrl,
     preset: preset.key,
-    models: [],          // what /models reported
+    models: [...(preset.models || [])], // what /models reported, or bundled starters
     customModels: [],    // what the user typed in by hand
-    defaultModel: '',
+    defaultModel: preset.defaultModel || '',
     extraHeaders: {},
   };
 }

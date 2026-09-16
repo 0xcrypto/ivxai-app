@@ -140,15 +140,19 @@ function unb64url(text) {
   return out;
 }
 
-/** Zip the bundle and fold it into a share link for this very page.
+/** Zip the bundle and fold it into a share link. The base is the configured
+    share URL when one is set — so a link built on this machine can open at
+    the public place the app is hosted — else this very page.
     Same shape as the JSON export, so the two stay interchangeable. */
-export async function buildLink({ conversation, messages }) {
+export async function buildLink({ conversation, messages, baseUrl = '' }) {
   const bundle = {
     app: 'ivx-ai-chat', version: 1, exportedAt: new Date().toISOString(),
     conversation, messages,
   };
   const zip = await zipOne('chat.json', JSON.stringify(bundle));
-  return `${location.origin}${location.pathname}#s=${b64url(zip)}`;
+  const base = String(baseUrl || '').trim().replace(/\/+$/, '')
+    || `${location.origin}${location.pathname}`;
+  return `${base}#s=${b64url(zip)}`;
 }
 
 /** Read a share link, if this page was opened with one. Null when absent,
@@ -171,7 +175,7 @@ export async function readSharedLink() {
     never overwrites the first copy. Returns the new conversation id. */
 export async function importShared(bundle) {
   const now = Date.now();
-  const { draft, ...conv } = bundle.conversation;
+  const { draft, archived, ...conv } = bundle.conversation;
   conv.id = store.uid();
   conv.createdAt = now;
   conv.updatedAt = now;

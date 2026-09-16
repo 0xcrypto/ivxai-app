@@ -26,6 +26,13 @@ export function openSettings(shell) {
   openSheet({ title: 'Settings', render: rootScreen });
 }
 
+/** Opens the sheet straight on the Providers screen — for entry points
+    outside Settings that already know where they are headed. */
+export function openProviders(shell) {
+  openSettings(shell);
+  pushScreen({ title: 'Providers', render: providersScreen });
+}
+
 /* ── building blocks ───────────────────────────────────────── */
 
 const group = (label, rows, note) => el('div', { class: 'group' }, [
@@ -133,12 +140,14 @@ function introScreen() {
   return el('div', {}, [
     el('div', { class: 'intro' }, [
       point('A UI for your LLM API',
-        'Bring a key from any provider, or point it at a model running on your ' +
-        'own machine. This is the interface — you choose the engine.'),
+        'Bring a key from any provider, point it at a model on your own machine, ' +
+        'or run a model right inside this browser. This is the interface — you ' +
+        'choose the engine.'),
       point('Private and local first',
-        'Ollama, LM Studio, llama.cpp and friends are first-class here, and a scan ' +
-        'finds the ones already running. Hosted providers work too; the choice and ' +
-        'the key stay yours.'),
+        'WebLLM needs no setup at all: the model is downloaded into this browser ' +
+        'and answered here. Ollama, LM Studio, llama.cpp and friends are ' +
+        'first-class too, and a scan finds the ones already running. Hosted ' +
+        'providers work as well; the choice and the key stay yours.'),
       point('Lightweight, and it runs anywhere',
         'One page in a browser. No backend, no account, no telemetry. Your chats ' +
         'and keys are stored here and shipped nowhere.'),
@@ -150,7 +159,7 @@ function introScreen() {
       }),
       el('button', {
         class: 'btn btn-secondary btn-block', type: 'button', text: 'Set up a provider',
-        onclick: () => { openSettings(app); pushScreen({ title: 'Providers', render: providersScreen }); },
+        onclick: () => openProviders(app),
       }),
     ]),
   ]);
@@ -174,6 +183,12 @@ function rootScreen() {
           ? `${providers.length} configured · ${local} local`
           : 'None yet — add one to start',
         onclick: () => pushScreen({ title: 'Providers', render: providersScreen }),
+      }),
+      navRow('Sharing', {
+        sub: app.getUI().shareBaseUrl
+          ? String(app.getUI().shareBaseUrl).trim().replace(/\/+$/, '')
+          : 'Links open where the app is served',
+        onclick: () => pushScreen({ title: 'Sharing', render: sharingScreen }),
       }),
       navRow('CORS bypass', {
         sub: bridge.describe(),
@@ -210,7 +225,7 @@ function providersScreen() {
 
     group('Configured', providers.length
       ? providers.map(p => navRow(p.name, {
-          sub: p.baseUrl || 'No address set',
+          sub: p.kind === 'webllm' ? 'Runs in this browser' : (p.baseUrl || 'No address set'),
           dot: Boolean(p.models?.length),
           tag: api.isLocalUrl(p.baseUrl) ? 'local' : null,
           onclick: () => pushScreen({ title: p.name, render: () => providerScreen(p) }),
@@ -220,6 +235,43 @@ function providersScreen() {
     group(null, [
       actionRow('Add a provider', { onclick: addProvider }),
     ]),
+  ]);
+}
+
+/* ── sharing ───────────────────────────────────────────────── */
+
+/** Where share links open. When the app runs on this machine, links built
+    from this page's own address are dead on arrival elsewhere, so the user
+    points them at the public place the app is hosted. */
+function sharingScreen() {
+  const input = el('input', {
+    class: 'form-control', type: 'url', value: app.getUI().shareBaseUrl || '',
+    placeholder: `${location.origin}${location.pathname}`,
+    spellcheck: 'false', autocapitalize: 'off',
+    onchange: async ev => {
+      const value = ev.target.value.trim().replace(/\/+$/, '');
+      if (value && !/^https?:\/\//i.test(value)) {
+        toast('Starts with http:// or https://', 'err');
+        return;
+      }
+      app.setUI({ shareBaseUrl: value });
+      if (value && api.isLocalUrl(value)) {
+        toast('Saved — but that is a local address; links built from it open only on this machine', 'err', 9000);
+      } else {
+        toast('Share links will open at this address', 'ok');
+      }
+      refreshSheet();
+    },
+  });
+
+  return el('div', {}, [
+    group('Base URL', [
+      el('div', { class: 'item' }, [field('Share links open at', input,
+        'Leave empty to use the address this app is served from.')]),
+    ], 'The chat rides inside the link, but the part before the # decides ' +
+       'where it opens. When this app runs on this machine, point this at the ' +
+       'public place the same app is hosted — a link built on localhost is ' +
+       'unreadable for whoever receives it.'),
   ]);
 }
 
@@ -343,9 +395,12 @@ function providerScreen(provider) {
           refreshSheet();
         },
       }),
-      el('div', { class: 'item' }, [field('Address', urlInput)]),
-      el('div', { class: 'item' }, [field('API key', keyInput,
-        locked ? 'Unlock under Privacy & data to edit.' : 'Stored in this browser only.')]),
+      // WebLLM has neither an address nor a key: the model runs right here.
+      ...(provider.kind === 'webllm' ? [] : [
+        el('div', { class: 'item' }, [field('Address', urlInput)]),
+        el('div', { class: 'item' }, [field('API key', keyInput,
+          locked ? 'Unlock under Privacy & data to edit.' : 'Stored in this browser only.')]),
+      ]),
     ]),
 
     group('Model', [
@@ -440,7 +495,7 @@ export function chooseModel(provider, selected, title = 'Model') {
       group(null, [
         actionRow('Type a model name', { onclick: typeItIn }),
         actionRow(models.length ? 'Refresh the list' : 'Fetch the model list', {
-          sub: provider.baseUrl || 'No address set',
+          sub: provider.kind === 'webllm' ? 'In this browser' : (provider.baseUrl || 'No address set'),
           onclick: async () => { await fetchModels(provider); refreshSheet(); },
         }),
       ], models.length ? null : 'No list yet. Fetch it, or just type the name — ' +
@@ -452,13 +507,14 @@ export function chooseModel(provider, selected, title = 'Model') {
 }
 
 async function pickModelFor(provider) {
-  const model = await chooseModel(provider, provider.defaultModel, 'Default model');
+  const previousModel = provider.defaultModel;
+  const model = await chooseModel(provider, previousModel, 'Default model');
   if (!model) return;
   provider.defaultModel = model;
   await app.saveProviders();
   // The provider's default agent follows its default model until the agent
-  // has one of its own.
-  await app.attachDefaultAgent(provider);
+  // has a model of its own choosing.
+  await app.attachDefaultAgent(provider, previousModel);
   app.refreshChrome();
   refreshSheet();
 }
@@ -888,7 +944,7 @@ function aboutScreen() {
     group('Where your data lives', [
       actionRow('IndexedDB · ivx', { sub: 'Conversations, messages, providers, API keys' }),
       actionRow('localStorage · ivx.ui', { sub: 'Theme and layout preferences' }),
-      actionRow('Cache Storage', { sub: 'The app shell, so it runs offline' }),
+      actionRow('Cache Storage', { sub: 'The app shell and WebLLM model weights' }),
     ]),
     el('div', { class: 'group' }, [
       para('Browsers require the provider to allow cross-origin calls. OpenRouter, OpenAI ' +
@@ -900,7 +956,9 @@ function aboutScreen() {
       linkRow('Halfmoon CSS', 'https://www.gethalfmoon.com', version('halfmoon', 'MIT')),
       // The installed version is @fontsource's packaging, not IBM's own release.
       linkRow('IBM Plex', 'https://www.ibm.com/plex/', 'SIL OFL · via @fontsource'),
-    ], 'All three are bundled into the build and served from this origin — none of ' +
-       'them is fetched from a CDN at runtime.'),
+      linkRow('WebLLM', 'https://github.com/mlc-ai/web-llm', version('webllm', 'Apache-2.0')),
+    ], 'All four are bundled into the build and served from this origin — none of ' +
+       'them is fetched from a CDN at runtime. WebLLM downloads model weights ' +
+       'from HuggingFace, once per model, into Cache Storage.'),
   ]);
 }

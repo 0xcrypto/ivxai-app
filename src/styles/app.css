@@ -109,19 +109,65 @@ body {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .conv-item.is-active .conv-item-title { font-weight: 600; }
+/* Agent-run threads read as secondary until hovered or opened. */
+.conv-item.is-spawned { opacity: .7; }
+.conv-item.is-spawned:hover, .conv-item.is-spawned.is-active { opacity: 1; }
+/* The archived-view swap rows sit at the list's edges and read as controls,
+   not chats. */
+.conv-arch-toggle { color: var(--bs-secondary-color); font-size: .875rem; }
+/* Icon-font caret inside the swap/expand rows; inline with the label. */
+.conv-caret { font-size: .75rem; margin-right: .25rem; }
+/* Spawned threads nest under the chat that asked for them. */
+.conv-item.is-sub { margin-left: 1.5rem; }
+
+/* ── Store ─────────────────────────────────────────────── */
+/* Catalog rows are divs (they hold a nested button), so hover and cursor
+   need stating here — button.item's styles don't reach them. */
+.item.is-link { cursor: pointer; }
+.item.is-link:hover { background-color: var(--bs-tertiary-bg); }
+.market-search { flex: 1 1 auto; min-width: 0; }
+.market-title { display: flex; align-items: center; gap: .4rem; }
+.market-title > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.market-meta { font-size: .75rem; color: var(--bs-tertiary-color); }
+.market-chips { display: flex; flex-wrap: wrap; gap: .5rem; padding: 0 .25rem .25rem; }
+.market-chip {
+  min-height: 2rem; padding: 0 .875rem;
+  border: 1px solid var(--bs-border-color); border-radius: 1rem;
+  background: transparent; color: var(--bs-secondary-color);
+  font-size: .8125rem; cursor: pointer;
+}
+.market-chip:hover { background-color: var(--bs-secondary-bg); }
+.market-chip.is-on {
+  background-color: var(--bs-secondary-bg);
+  color: var(--bs-emphasis-color); border-color: var(--bs-secondary-color);
+}
+.market-go {
+  flex: 0 0 auto; min-height: 2rem; padding: 0 .875rem;
+  border: 1px solid var(--bs-border-color); border-radius: 1rem;
+  background: transparent; color: var(--bs-body-color);
+  font-size: .8125rem; cursor: pointer;
+}
+.market-go:hover { background-color: var(--bs-secondary-bg); }
+.market-go.is-done { color: var(--bs-secondary-color); border-style: dashed; cursor: default; }
+.market-go.is-done:hover { background-color: transparent; }
 .conv-empty { padding: 1.5rem .5rem; font-size: .875rem; color: var(--bs-secondary-color); text-align: center; }
 
 .drawer-foot {
+  display: flex; gap: .5rem;
   border-top: 1px solid var(--bs-border-color);
   padding: .5rem .5rem calc(.5rem + var(--safe-bottom));
 }
 .foot-btn {
   display: flex; align-items: center; gap: .625rem;
-  width: 100%; min-height: var(--tap);
+  flex: 1 1 auto; min-width: 0; min-height: var(--tap);
   padding: 0 .625rem;
   border: 0; border-radius: .75rem;
   background: transparent; color: var(--bs-body-color);
   font-size: .9375rem; text-align: left;
+}
+.foot-btn.icon-only {
+  flex: 0 0 auto; justify-content: center;
+  padding: 0 .75rem; font-size: 1.05rem;
 }
 .foot-btn:hover { background-color: var(--bs-tertiary-bg); }
 .foot-icon { font-size: 1.05rem; line-height: 1; }
@@ -366,7 +412,7 @@ body {
 }
 .chip:hover { background-color: var(--bs-secondary-bg); color: var(--bs-body-color); }
 .chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chip-caret { font-size: .625rem; }
+.chip-caret { font-size: .75rem; }
 
 .composer-row {
   display: flex; align-items: flex-end; gap: .5rem;
@@ -510,6 +556,7 @@ body {
   font-size: .8125rem; line-height: 1.5; color: var(--bs-secondary-color);
 }
 .group-note code { font-size: .9em; }
+.group-note.warn { color: var(--bs-danger-text-emphasis); }
 
 .item-list {
   border: 1px solid var(--bs-border-color);

@@ -16,6 +16,7 @@ import '@fontsource/ibm-plex-sans/latin-600.css';
 import '@fontsource/ibm-plex-sans/latin-700.css';
 import '@fontsource/ibm-plex-mono/latin-400.css';
 import '@fontsource/ibm-plex-mono/latin-600.css';
+import './styles/icons.css';   // icons render from this vendored font, never emoji
 import './styles/theme.css';
 import './styles/app.css';
 
@@ -25,7 +26,8 @@ import * as api from './providers.js';
 import * as bridge from './bridge.js';
 import * as share from './share.js';
 import { renderMarkdown } from './markdown.js';
-import { openSettings, openIntro, openDisclaimer, chooseModel, setShell } from './settings.js';
+import { openSettings, openProviders, openIntro, openDisclaimer, chooseModel, setShell } from './settings.js';
+import { openMarket } from './market.js';
 import {
   $, el, clear, toast, actionSnack, initSheet, openSheet, pushScreen, closeSheet, refreshSheet,
   confirmAction, promptText, copyText, downloadJSON, downloadBlob, groupLabel, autosize,
@@ -50,6 +52,8 @@ const state = {
   streaming: null,
   shared: null,      // a share link being previewed; set only by acceptSharedLink
   searchHits: null,
+  showArchived: false,   // sidebar toggle: list archived chats instead of live ones
+  openThreads: new Set(), // sidebar groups that are expanded: parent ids or 'orphan'
   pinned: true,
 };
 
@@ -86,8 +90,10 @@ async function boot() {
   state.defaults = { ...DEFAULTS, ...(await store.kvGet('defaults', {})) };
 
   if (!state.providers.length) {
-    // Local runtimes first — they work with no key and no account.
-    state.providers = ['ollama', 'lmstudio', 'openrouter']
+    // WebLLM leads — the model runs in this very browser, with no server, no
+    // key and no account, so a fresh install can chat right away. The rest
+    // are the local runtimes worth finding and one hosted option.
+    state.providers = ['webllm', 'ollama', 'lmstudio', 'openrouter']
       .map(key => api.makeProvider(api.PRESETS.find(p => p.key === key)));
     await saveProviders();
   }
@@ -250,6 +256,10 @@ const newAgentFor = provider => ({
   name: provider.name,
   providerId: provider.id,
   model: provider.defaultModel || '',
+  // True while the model is only inherited from the provider's default. An
+  // explicit pick in the agent editor sets it false and the agent then keeps
+  // its model across provider default changes.
+  modelFromProvider: true,
   systemPrompt: state.defaults.systemPrompt || '',
   temperature: state.defaults.temperature,
   maxTokens: state.defaults.maxTokens,
@@ -330,7 +340,7 @@ function toolsPrompt(agent) {
 
 /** Run one delegated question in its own thread with its own agent, and
     return the answer — or a failure the model can read and react to. */
-async function executeAskTool(call, controller) {
+async function executeAskTool(call, controller, parentConvId) {
   const prompt = String(call.prompt || '').trim();
   const wanted = String(call.agent || '').trim().toLowerCase();
   const target = state.agents.find(a => a.name.toLowerCase() === wanted) || null;
@@ -359,6 +369,8 @@ async function executeAskTool(call, controller) {
   });
   thread.title = `${target.name}: ${prompt.slice(0, 60)}`;
   thread.agentId = target.id;
+  thread.parentConvId = parentConvId;   // the sidebar nests it under this chat
+  thread.spawned = true;               // marks it for the sidebar's agent-threads group
   await store.putConversation(thread);
   await store.putMessage(store.newMessage(thread.id, 'user', prompt, 0));
   await refreshConversations();
@@ -392,16 +404,28 @@ async function executeAskTool(call, controller) {
 /** Called whenever a provider is configured (added, or gains a default model):
     guarantees it has a default agent, makes it the one new chats use, and
     offers it to the chat on screen if that has not chosen one yet. */
-async function attachDefaultAgent(provider) {
+async function attachDefaultAgent(provider, previousModel = '') {
   let agent = state.agents.find(a => a.providerId === provider.id);
   if (!agent) {
     agent = newAgentFor(provider);
     state.agents.push(agent);
     await saveAgents();
     saveUI({ lastAgentId: agent.id });
-  } else if (!agent.model && provider.defaultModel) {
-    agent.model = provider.defaultModel;
-    await saveAgents();
+  } else {
+    // The agent's model follows the provider's default until the user picked
+    // one on the agent itself (modelFromProvider === false). Agents saved
+    // before that flag existed are treated as inherited only when their model
+    // still equals the default the provider had before this change.
+    const follows = provider.defaultModel && (
+      !agent.model ||
+      agent.modelFromProvider === true ||
+      (agent.modelFromProvider === undefined && previousModel && agent.model === previousModel)
+    );
+    if (follows) {
+      agent.model = provider.defaultModel;
+      agent.modelFromProvider = true;
+      await saveAgents();
+    }
   }
   if (state.conv?.draft && !state.conv.agentId) {
     state.conv.agentId = agent.id;
@@ -451,8 +475,10 @@ async function warmModels(provider) {
   if (preset?.needsKey && !vault.getKey(provider.id)) return;
   try {
     provider.models = await api.listModels(provider, vault.getKey(provider.id));
-    if (!provider.defaultModel && provider.models.length) {
+    const previousModel = provider.defaultModel;
+    if (!previousModel && provider.models.length) {
       provider.defaultModel = provider.models[0];
+      await attachDefaultAgent(provider, previousModel);
     }
     await saveProviders();
     if (state.conv && !state.conv.model) state.conv.model = provider.defaultModel;
@@ -470,37 +496,104 @@ async function refreshConversations() {
 function renderConvList() {
   const list = clear(dom.convList);
   const query = dom.search.value.trim().toLowerCase();
+  const matches = c => !query || (c.title || '').toLowerCase().includes(query) ||
+    (state.searchHits?.has(c.id) ?? false);
+  const archivedAll = state.conversations.filter(c => c.archived);
 
-  let items = state.conversations;
-  if (query) {
-    items = items.filter(c => (c.title || '').toLowerCase().includes(query) ||
-      (state.searchHits?.has(c.id) ?? false));
-  }
-  if (!items.length) {
-    list.append(el('p', { class: 'conv-empty', text: query ? 'Nothing matches' : 'No chats yet' }));
+  // Archived chats are out of sight until asked for; the toggle rows swap
+  // between the two views without a sheet.
+  const swapArchived = show => { state.showArchived = show; renderConvList(); };
+  const archRow = (label, show, icon) => el('button', {
+    class: 'conv-item conv-arch-toggle', type: 'button',
+    onclick: () => swapArchived(show),
+  }, [el('span', { class: 'conv-item-title' }, [
+    icon ? el('span', { class: `${icon} conv-caret`, 'aria-hidden': 'true' }) : null,
+    label,
+  ])]);
+
+  // Threads the AI opened with its ask-tool live under the chat that asked
+  // for them, behind a click-to-open row — same pattern as the archive.
+  const pool = state.showArchived ? archivedAll : state.conversations.filter(c => !c.archived);
+  const mine = pool.filter(c => !c.spawned && matches(c));
+  const threadsOf = parent => pool.filter(c => c.spawned && c.parentConvId === parent.id && matches(c));
+  // Threads whose parent is gone or not in this view, plus every hit while
+  // searching: they all land in the flat group at the bottom.
+  const orphans = query ? [] : pool.filter(c => c.spawned && matches(c) &&
+    !state.conversations.some(p => p.id === c.parentConvId &&
+      (state.showArchived ? p.archived : !p.archived)));
+  const strays = query
+    ? pool.filter(c => c.spawned && matches(c) &&
+      (!c.parentConvId || !mine.some(p => p.id === c.parentConvId)))
+    : [];
+
+  const convItem = (conv, sub) => el('button', {
+    class: `conv-item${conv.spawned ? ' is-spawned' : ''}${sub ? ' is-sub' : ''}${conv.id === state.conv?.id ? ' is-active' : ''}`,
+    type: 'button',
+    onclick: () => { openConversation(conv.id); closeDrawer(); },
+  }, [
+    el('span', { class: 'conv-item-title', text: conv.title || 'Untitled' }),
+  ]);
+
+  const threadsRow = (key, n, open, sub) => el('button', {
+    class: `conv-item conv-arch-toggle${sub ? ' is-sub' : ''}`, type: 'button',
+    onclick: () => {
+      if (open) state.openThreads.delete(key);
+      else state.openThreads.add(key);
+      renderConvList();
+    },
+  }, [el('span', { class: 'conv-item-title' }, [
+    el('span', {
+      class: `ri-${open ? 'arrow-down-s' : 'arrow-right-s'}-line conv-caret`,
+      'aria-hidden': 'true',
+    }),
+    `Agent threads · ${n}`,
+  ])]);
+
+  if (!mine.length && !orphans.length && !strays.length) {
+    list.append(el('p', {
+      class: 'conv-empty',
+      text: query ? 'Nothing matches' : (state.showArchived ? 'Nothing archived' : 'No chats yet'),
+    }));
+    if (state.showArchived) list.append(archRow('All chats', false, 'ri-arrow-left-line'));
     return;
   }
 
+  if (state.showArchived) list.append(archRow('All chats', false, 'ri-arrow-left-line'));
+
   let group = null;
-  for (const conv of items) {
+  for (const conv of mine) {
     const label = groupLabel(conv.updatedAt);
     if (label !== group) {
       group = label;
       list.append(el('div', { class: 'conv-group', text: label }));
     }
-    list.append(el('button', {
-      class: `conv-item${conv.id === state.conv?.id ? ' is-active' : ''}`,
-      type: 'button',
-      onclick: () => { openConversation(conv.id); closeDrawer(); },
-    }, [
-      el('span', { class: 'conv-item-title', text: conv.title || 'Untitled' }),
-    ]));
+    list.append(convItem(conv));
+    if (query) continue;              // while searching, threads flatten below
+    const threads = threadsOf(conv);
+    if (threads.length) {
+      const open = state.openThreads.has(conv.id);
+      list.append(threadsRow(conv.id, threads.length, open, true));
+      if (open) for (const t of threads) list.append(convItem(t, true));
+    }
+  }
+  if (orphans.length) {
+    const open = state.openThreads.has('orphan');
+    list.append(threadsRow('orphan', orphans.length, open, false));
+    if (open) for (const t of orphans) list.append(convItem(t, true));
+  }
+  if (strays.length) {
+    list.append(el('div', { class: 'conv-group', text: `Agent threads · ${strays.length}` }));
+    for (const t of strays) list.append(convItem(t, true));
+  }
+  if (!state.showArchived && archivedAll.length) {
+    list.append(archRow(`Archived · ${archivedAll.length}`, true));
   }
 }
 
 function startDraft() {
   detachStreaming();
   exitSharedPreview();
+  state.showArchived = false;          // a new chat belongs in the main list
   // New chats speak in agents: the last one used, else the first configured.
   const agent = state.agents.find(a => a.id === state.ui.lastAgentId) || state.agents[0] || null;
   const provider = agent ? providerById(agent.providerId) : (state.providers[0] || null);
@@ -892,7 +985,7 @@ async function runCompletion() {
       await store.putMessage(assistant);
 
       for (const call of calls) {
-        const run = await executeAskTool(call, controller);   // AbortError escapes
+        const run = await executeAskTool(call, controller, convId);   // AbortError escapes
         const toolMsg = store.newMessage(convId, 'tool',
           // The content is what historyForRequest feeds back; an empty answer
           // has to say so, or the next round never learns the ask happened.
@@ -1042,7 +1135,7 @@ function agentsScreen() {
           el('span', { class: 'item-main' }, [el('span', { class: 'item-title', text: 'Edit an agent' })]),
           el('span', { class: 'item-chevron', text: '›' }),
         ]) : null,
-        el('button', { class: 'item', type: 'button', onclick: () => openSettings(shell) }, [
+        el('button', { class: 'item', type: 'button', onclick: () => openProviders(shell) }, [
           el('span', { class: 'item-main' }, [el('span', { class: 'item-title', text: 'Manage providers' })]),
           el('span', { class: 'item-chevron', text: '›' }),
         ]),
@@ -1125,6 +1218,8 @@ function agentEditorScreen(agent) {
       const model = await chooseModel(provider, draft.model, 'Model');
       if (!model) return;
       draft.model = model;
+      // Picked by hand: no longer inherited from the provider's default.
+      draft.modelFromProvider = false;
       refreshSheet();
     },
   }, [
@@ -1271,6 +1366,7 @@ function chatMenuScreen() {
         row('Rename', renameChat),
         row('Chat settings', () => pushScreen({ title: 'Chat settings', render: chatSettingsScreen })),
         row('Duplicate', duplicateChat),
+        row(state.conv.archived ? 'Unarchive chat' : 'Archive chat', archiveChat),
       ]),
     ]),
     el('div', { class: 'group' }, [
@@ -1431,6 +1527,7 @@ async function duplicateChat() {
     createdAt: Date.now(), updatedAt: Date.now(),
   };
   delete copy.draft;
+  delete copy.archived;          // a copy starts fresh in the main list
   await store.putConversation(copy);
   for (const m of state.messages) await store.putMessage({ ...m, id: store.uid(), convId: copy.id });
   await refreshConversations();
@@ -1464,29 +1561,43 @@ function exportChat(kind) {
 
 /* ── share links ───────────────────────────────────────────── */
 
+/** The configured share base, normalized the same way buildLink does it. */
+const shareBaseUrl = () => String(state.ui.shareBaseUrl || '').trim().replace(/\/+$/, '');
+
 async function openShare() {
   if (!state.messages.length) { toast('Nothing to share yet', 'err'); return; }
   // A reply still being written is not part of the chat yet — leaving it out
   // keeps "what the link says" and "what the chat says" the same thing.
   const messages = state.messages.filter(m => !m.pending);
+  // The link's base: what the user configured, else this very page. Resolving
+  // it here (not in buildLink) so the local-instance warning sees the truth.
+  const base = shareBaseUrl() || `${location.origin}${location.pathname}`;
   let url;
   try {
     const { draft, ...conv } = state.conv;
-    url = await share.buildLink({ conversation: conv, messages });
+    url = await share.buildLink({ conversation: conv, messages, baseUrl: shareBaseUrl() });
   } catch (err) {
     toast(err.message || 'Could not build the share link', 'err');
     return;
   }
-  pushScreen({ title: 'Share link', render: () => shareScreen(url) });
+  pushScreen({ title: 'Share link', render: () => shareScreen(url, base) });
 }
 
-function shareScreen(url) {
+function shareScreen(url, base) {
   const kb = Math.round(url.length / 102.4) / 10;
   // is.gd — the most permissive shortener here — draws the line at 5,000
   // characters; past that the automatic shortening cannot work at all.
   const hint = url.length > 5000
     ? 'Longer than is.gd accepts (5,000 characters), so the shortener will refuse. Export a file instead.'
     : url.length > 2000 ? 'Long links like this are refused by some shorteners.' : '';
+  // A link aimed at this machine opens only on this machine; the recipient
+  // gets a dead address, so it is worth saying before the link is copied.
+  const localNote = api.isLocalUrl(base)
+    ? el('p', { class: 'group-note warn', text:
+        'This link opens on this machine only. Whoever receives it on another ' +
+        'device will not reach your instance — set a public base URL under ' +
+        'Settings → Sharing, or export the chat as a file instead.' })
+    : null;
 
   const result = el('div');
   const shortenBtn = el('button', {
@@ -1524,6 +1635,7 @@ function shareScreen(url) {
 
   return el('div', {}, [
     el('p', { class: 'group-note', text: 'The whole conversation is zipped and encoded into this link. The app uploads nothing — but anyone who has the link, including a shortener, can read the chat.' }),
+    localNote,
     el('div', { class: 'field' }, [
       el('textarea', { class: 'form-control', rows: 4, readOnly: true, value: url,
                       'aria-label': 'Share link', onclick: ev => ev.target.select() }),
@@ -1583,6 +1695,89 @@ async function deleteChat() {
   await refreshConversations();
   closeSheet();
   toast('Chat deleted');
+}
+
+/* Archive moves chats out of the way without destroying anything. The flag is
+   written directly — bumping updatedAt here would lie about recent activity. */
+async function setArchived(conv, value) {
+  conv.archived = value;
+  await store.putConversation(conv);
+  await refreshConversations();
+}
+
+async function archiveChat() {
+  const conv = state.conv;
+  if (!conv || conv.draft) { toast('Nothing to archive yet'); return; }
+  closeSheet();
+  await setArchived(conv, !conv.archived);
+  toast(conv.archived ? 'Chat archived' : 'Chat unarchived');
+}
+
+async function archiveAll() {
+  const targets = state.conversations.filter(c => !c.archived);
+  if (!targets.length) { toast('Nothing to archive'); return; }
+  const ok = await confirmAction({
+    title: 'Archive all chats?',
+    body: `${targets.length} chat${targets.length === 1 ? '' : 's'} move to the archive. Nothing is deleted.`,
+    okText: 'Archive all',
+  });
+  if (!ok) return;
+  for (const c of targets) { c.archived = true; await store.putConversation(c); }
+  await refreshConversations();
+  closeSheet();
+  toast('All chats archived');
+}
+
+async function unarchiveAll() {
+  const targets = state.conversations.filter(c => c.archived);
+  if (!targets.length) { toast('Nothing archived'); return; }
+  const ok = await confirmAction({
+    title: 'Unarchive all chats?',
+    body: `${targets.length} chat${targets.length === 1 ? '' : 's'} return to the main list.`,
+    okText: 'Unarchive all',
+  });
+  if (!ok) return;
+  for (const c of targets) { c.archived = false; await store.putConversation(c); }
+  state.showArchived = false;
+  await refreshConversations();
+  closeSheet();
+  toast('All chats unarchived');
+}
+
+async function deleteEverything() {
+  const ok = await confirmAction({
+    title: 'Delete all chats?',
+    body: 'Every chat is removed, including archived ones. Providers and keys are kept.',
+    okText: 'Delete all',
+  });
+  if (!ok) return;
+  state.showArchived = false;
+  await shell.deleteAllChats();
+  closeSheet();
+  toast('All chats deleted');
+}
+
+function listMenuScreen() {
+  const row = (title, onclick, danger) => el('button', {
+    class: `item${danger ? ' danger' : ''}`, type: 'button', onclick,
+  }, [el('span', { class: 'item-main' }, [el('span', { class: 'item-title', text: title })])]);
+
+  const archived = state.conversations.filter(c => c.archived).length;
+  const active = state.conversations.length - archived;
+
+  return el('div', {}, [
+    el('div', { class: 'group' }, [
+      el('div', { class: 'item-list' }, [
+        archived ? row('Unarchive all chats', unarchiveAll) : null,
+        active ? row('Archive all chats', archiveAll) : null,
+      ]),
+    ]),
+    el('div', { class: 'group' }, [
+      el('div', { class: 'item-list' }, [
+        row('Delete all chats', deleteEverything, true),
+      ]),
+    ]),
+  ]);
 }
 
 async function askUnlock() {
@@ -1672,6 +1867,8 @@ function bindEvents() {
   $('#btnNewChat').addEventListener('click', () => { startDraft(); closeDrawer(); dom.input.focus(); });
   $('#btnChatMenu').addEventListener('click', openChatMenu);
   $('#btnSettings').addEventListener('click', () => { closeDrawer(); openSettings(shell); });
+  $('#btnStore').addEventListener('click', () => { closeDrawer(); openMarket(shell); });
+  $('#btnListMenu').addEventListener('click', () => { closeDrawer(); openSheet({ title: 'Chats', render: listMenuScreen }); });
   $('#btnDisclaimer').addEventListener('click', () => openDisclaimer());
   dom.chip.addEventListener('click', openAgentPicker);
   $('#btnJump').addEventListener('click', scrollToBottom);
