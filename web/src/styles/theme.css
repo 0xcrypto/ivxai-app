@@ -1,0 +1,352 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 0xcrypto */
+
+/* ivx/ai Chat theme: IBM Plex + a neutral grayscale ramp.
+
+   Halfmoon's palette is overridden here rather than edited, so the npm copy
+   stays untouched. Selectors carry html[data-bs-core] to outrank Halfmoon's
+   own [data-bs-core=x][data-bs-theme=y] rules. The @font-face declarations
+   come from @fontsource, imported in main.js. */
+
+/* ── the ramp ──────────────────────────────────────────────── */
+
+:root {
+  --n-50:  #fafafa;
+  --n-100: #eeeeee;
+  --n-200: #e6e6e6;
+  --n-300: #d6d6d6;
+  --n-400: #a5a5a5;
+  --n-500: #767676;
+  --n-600: #575757;
+  --n-700: #434343;
+  --n-800: #292929;
+  --n-900: #1a1a1a;
+  --n-950: #0a0a0a;
+
+  /* Without one accent, "Erase everything" reads the same as "Export". */
+  --n-danger: hsl(5, 54%, 42%);
+  --n-danger-contrast: #fafafa;
+
+  /* The second and last accent: a caution the eye catches before the words.
+     Reserved for what a third party could do to you, not for anything the
+     app itself is about to do — that is danger's job. Light values here;
+     the dark theme restates them below against a dark ground. */
+  --n-warn-bg: hsl(45, 90%, 95%);
+  --n-warn-border: hsl(43, 80%, 72%);
+  --n-warn-text: hsl(33, 85%, 26%);
+
+  --bs-font-sans-serif: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --bs-font-monospace: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --bs-body-font-family: var(--bs-font-sans-serif);
+  --bs-body-font-weight: 400;
+  --bs-border-radius: .75rem;
+  --bs-border-radius-sm: .5rem;
+  --bs-border-radius-lg: 1rem;
+}
+
+body,
+.btn,
+.form-control,
+.form-select {
+  font-family: var(--bs-font-sans-serif);
+  font-feature-settings: 'kern' 1, 'liga' 1, 'calt' 1;
+}
+code, pre, kbd, samp, .font-monospace { font-family: var(--bs-font-monospace); }
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  letter-spacing: -.011em;
+}
+
+/* Halfmoon generates every shade from a few hue/saturation knobs. Zeroing the
+   gray generators turns the whole system neutral in one move, instead of
+   overriding several hundred derived variables. The element selector beats
+   Halfmoon's own [data-bs-core=x][data-bs-theme=y] rules. */
+
+html[data-bs-core],
+html[data-bs-core][data-bs-theme="dark"],
+html[data-bs-core][data-bs-theme="light"] {
+  --bs-slate-hue: 0;            --bs-slate-saturation: 0%;
+  --bs-neutral-hue: 0;          --bs-neutral-saturation: 0%;
+  --bs-lightgray-hue: 0;        --bs-lightgray-saturation: 0%;
+  --bs-darkgray-hue: 0;         --bs-darkgray-saturation: 0%;
+  --bs-gray-hue: 0;             --bs-gray-saturation: 0%;
+  --bs-sable-hue: 0;            --bs-sable-saturation: 0%;
+  --bs-color-hue: 0;            --bs-color-saturation: 0%;
+
+  /* Accents follow the same rule: the ramp has no hue, so neither do they. */
+  --bs-primary-hue: 0;          --bs-primary-saturation: 0%;
+  --bs-secondary-hue: 0;        --bs-secondary-saturation: 0%;
+  --bs-success-hue: 0;          --bs-success-saturation: 0%;
+  --bs-info-hue: 0;             --bs-info-saturation: 0%;
+  --bs-warning-hue: 0;          --bs-warning-saturation: 0%;
+  --bs-light-hue: 0;            --bs-light-saturation: 0%;
+  --bs-dark-hue: 0;             --bs-dark-saturation: 0%;
+
+  /* Destructive actions keep the one accent in the app. */
+  --bs-danger-hue: 5;           --bs-danger-saturation: 48%;
+}
+
+/* ── dark ──────────────────────────────────────────────────── */
+
+html[data-bs-core][data-bs-theme="dark"] {
+  --n-warn-bg: hsl(40, 38%, 11%);
+  --n-warn-border: hsl(40, 40%, 26%);
+  --n-warn-text: hsl(45, 85%, 72%);
+
+  /* Halfmoon's utilities (.text-secondary, .bg-body-*) read the -hsl forms,
+     so pin those to the same ramp the component variables use. */
+  --bs-body-bg-hsl: 0, 0%, 3.9%;
+  --bs-body-color-hsl: 0, 0%, 90.2%;
+  --bs-emphasis-color-hsl: 0, 0%, 98%;
+  --bs-secondary-bg-hsl: 0, 0%, 10.2%;
+  --bs-tertiary-bg-hsl: 0, 0%, 16.1%;
+  --bs-content-bg-hsl: 0, 0%, 3.9%;
+  --bs-content-floating-bg-hsl: 0, 0%, 10.2%;
+  --bs-secondary-color-hsl: 0, 0%, 64.7%;
+  --bs-tertiary-color-hsl: 0, 0%, 46.3%;
+  /* .text-secondary / .text-success read the brand hsl, not *-color-hsl. */
+  --bs-secondary-hsl: 0, 0%, 64.7%;
+  --bs-success-hsl: 0, 0%, 64.7%;
+  --bs-link-color-hsl: 0, 0%, 98%;
+  --bs-link-hover-color-hsl: 0, 0%, 90.2%;
+
+  --bs-body-bg: var(--n-950);
+  --bs-body-bg-rgb: 10, 10, 10;
+  --bs-body-color: var(--n-200);
+  --bs-body-color-rgb: 230, 230, 230;
+  --bs-emphasis-color: var(--n-50);
+  --bs-heading-color: var(--n-50);
+
+  --bs-secondary-bg: var(--n-900);
+  --bs-secondary-bg-rgb: 26, 26, 26;
+  --bs-tertiary-bg: var(--n-800);
+  --bs-tertiary-bg-rgb: 41, 41, 41;
+  --bs-secondary-color: var(--n-400);
+  --bs-tertiary-color: var(--n-500);
+
+  --bs-border-color: var(--n-800);
+  --bs-border-color-translucent: var(--n-800);
+
+  --bs-primary: var(--n-50);
+  --bs-primary-rgb: 250, 250, 250;
+  --bs-link-color: var(--n-50);
+  --bs-link-hover-color: var(--n-200);
+
+  --bs-danger-hsl: 5, 55%, 70%;
+  --bs-danger: hsl(var(--bs-danger-hsl));
+  --bs-danger-rgb: 224, 141, 133;
+  --bs-danger-text-emphasis: hsl(5, 55%, 76%);
+  --bs-danger-bg-subtle: hsl(5, 30%, 12%);
+  --bs-danger-border-subtle: hsl(5, 32%, 26%);
+
+  --bs-success: var(--n-50);
+  --bs-code-color: var(--n-200);
+  --bs-focus-ring-color: rgba(250, 250, 250, .16);
+
+  --n-danger: hsl(5, 55%, 70%);
+  --n-danger-contrast: var(--n-950);
+  --n-invert-bg: var(--n-50);
+  --n-invert-fg: var(--n-950);
+  --n-shadow: rgba(0, 0, 0, .6);
+
+  /* Code colours. The app is grayscale on purpose, so highlighting uses the
+     fewest hues that still separate the parts of a line, all desaturated
+     enough to sit inside a neutral UI rather than shout over it. */
+  --code-comment: var(--n-500);
+  --code-keyword: hsl(265, 32%, 72%);
+  --code-string:  hsl(110, 24%, 66%);
+  --code-number:  hsl(28, 40%, 70%);
+  --code-func:    hsl(205, 34%, 70%);
+  --code-type:    hsl(170, 26%, 66%);
+  --code-meta:    var(--n-400);
+  --code-added:   hsl(110, 26%, 62%);
+  --code-removed: hsl(5, 45%, 68%);
+}
+
+/* ── light ─────────────────────────────────────────────────── */
+
+html[data-bs-core][data-bs-theme="light"] {
+  --bs-body-bg-hsl: 0, 0%, 98%;
+  --bs-body-color-hsl: 0, 0%, 10.2%;
+  --bs-emphasis-color-hsl: 0, 0%, 3.9%;
+  --bs-secondary-bg-hsl: 0, 0%, 93.3%;
+  --bs-tertiary-bg-hsl: 0, 0%, 90.2%;
+  --bs-content-bg-hsl: 0, 0%, 98%;
+  --bs-content-floating-bg-hsl: 0, 0%, 98%;
+  --bs-secondary-color-hsl: 0, 0%, 34.1%;
+  --bs-tertiary-color-hsl: 0, 0%, 46.3%;
+  --bs-secondary-hsl: 0, 0%, 34.1%;
+  --bs-success-hsl: 0, 0%, 34.1%;
+  --bs-link-color-hsl: 0, 0%, 10.2%;
+  --bs-link-hover-color-hsl: 0, 0%, 3.9%;
+
+  --bs-body-bg: var(--n-50);
+  --bs-body-bg-rgb: 250, 250, 250;
+  --bs-body-color: var(--n-900);
+  --bs-body-color-rgb: 26, 26, 26;
+  --bs-emphasis-color: var(--n-950);
+  --bs-heading-color: var(--n-950);
+
+  --bs-secondary-bg: var(--n-100);
+  --bs-secondary-bg-rgb: 238, 238, 238;
+  --bs-tertiary-bg: var(--n-200);
+  --bs-tertiary-bg-rgb: 230, 230, 230;
+  --bs-secondary-color: var(--n-600);
+  --bs-tertiary-color: var(--n-500);
+
+  --bs-border-color: var(--n-300);
+  --bs-border-color-translucent: var(--n-300);
+
+  --bs-primary: var(--n-900);
+  --bs-primary-rgb: 26, 26, 26;
+  --bs-link-color: var(--n-900);
+  --bs-link-hover-color: var(--n-950);
+
+  --bs-danger-hsl: 5, 54%, 42%;
+  --bs-danger: hsl(var(--bs-danger-hsl));
+  --bs-danger-rgb: 165, 59, 49;
+  --bs-danger-text-emphasis: hsl(5, 54%, 33%);
+  --bs-danger-bg-subtle: hsl(5, 45%, 96%);
+  --bs-danger-border-subtle: hsl(5, 35%, 84%);
+
+  --bs-success: var(--n-900);
+  --bs-code-color: var(--n-800);
+  --bs-focus-ring-color: rgba(26, 26, 26, .14);
+
+  --n-danger: hsl(5, 54%, 42%);
+  --n-danger-contrast: var(--n-50);
+  --n-invert-bg: var(--n-900);
+  --n-invert-fg: var(--n-50);
+  --n-shadow: rgba(10, 10, 10, .18);
+
+  /* The same hues, darkened and a little stronger: they sit on a light gray
+     block, where a pale tint would read as damaged text rather than colour. */
+  --code-comment: var(--n-500);
+  --code-keyword: hsl(265, 38%, 42%);
+  --code-string:  hsl(120, 40%, 28%);
+  --code-number:  hsl(24, 60%, 34%);
+  --code-func:    hsl(205, 52%, 36%);
+  --code-type:    hsl(175, 48%, 28%);
+  --code-meta:    var(--n-600);
+  --code-added:   hsl(120, 42%, 28%);
+  --code-removed: hsl(5, 54%, 42%);
+}
+
+/* ── Touch scale ───────────────────────────────────────────────
+   Halfmoon's default control is 30px, which is a mouse target. Everything
+   interactive here is at least 44px, and inputs sit at 1rem so iOS Safari
+   does not zoom the viewport when one takes focus. */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  padding-inline: 1rem;
+  font-size: .9375rem;
+  --bs-btn-font-weight: 500;
+  --bs-btn-focus-box-shadow: 0 0 0 .15rem var(--bs-focus-ring-color);
+}
+.btn-block { width: 100%; }
+
+.form-control, .form-select {
+  min-height: var(--tap);
+  padding: .625rem .875rem;
+  font-size: 1rem;
+  background-color: var(--bs-body-bg);
+  border-color: var(--bs-border-color);
+  color: var(--bs-body-color);
+}
+.form-select { padding-right: 2.25rem; }
+textarea.form-control { min-height: 5rem; line-height: 1.55; }
+.form-control:focus, .form-select:focus {
+  background-color: var(--bs-body-bg);
+  border-color: var(--n-500);
+  color: var(--bs-body-color);
+  box-shadow: 0 0 0 .15rem var(--bs-focus-ring-color);
+}
+.form-control::placeholder { color: var(--bs-tertiary-color); }
+
+.form-check-input { width: 1.125rem; height: 1.125rem; margin-top: .1875rem; }
+.form-check-input:checked {
+  background-color: var(--n-invert-bg);
+  border-color: var(--n-invert-bg);
+}
+.form-check-input:focus { box-shadow: 0 0 0 .15rem var(--bs-focus-ring-color); }
+.form-range { accent-color: var(--n-invert-bg); }
+
+/* Switches read better than checkboxes in a settings list. */
+.form-switch .form-check-input { width: 2.25rem; height: 1.375rem; margin-top: 0; }
+.form-check.form-switch {
+  display: flex; align-items: center; gap: .625rem;
+  min-height: var(--tap); padding-left: 0; margin: 0;
+}
+.form-check.form-switch .form-check-label { flex: 1 1 auto; order: -1; font-size: .9375rem; }
+
+/* ── Buttons ───────────────────────────────────────────────── */
+
+/* Primary is the inverse of the surface: black on light, white on dark. */
+.btn-primary {
+  --bs-btn-color: var(--n-invert-fg);
+  --bs-btn-bg: var(--n-invert-bg);
+  --bs-btn-border-color: var(--n-invert-bg);
+  --bs-btn-hover-color: var(--n-invert-fg);
+  --bs-btn-hover-bg: var(--n-500);
+  --bs-btn-hover-border-color: var(--n-500);
+  --bs-btn-active-color: var(--n-invert-fg);
+  --bs-btn-active-bg: var(--n-600);
+  --bs-btn-active-border-color: var(--n-600);
+  --bs-btn-disabled-color: var(--n-invert-fg);
+  --bs-btn-disabled-bg: var(--n-400);
+  --bs-btn-disabled-border-color: var(--n-400);
+}
+
+.btn-secondary {
+  --bs-btn-color: var(--bs-body-color);
+  --bs-btn-bg: var(--bs-secondary-bg);
+  --bs-btn-border-color: var(--bs-border-color);
+  --bs-btn-hover-color: var(--bs-emphasis-color);
+  --bs-btn-hover-bg: var(--bs-tertiary-bg);
+  --bs-btn-hover-border-color: var(--n-500);
+  --bs-btn-active-color: var(--bs-emphasis-color);
+  --bs-btn-active-bg: var(--bs-tertiary-bg);
+  --bs-btn-active-border-color: var(--n-500);
+  --bs-btn-disabled-color: var(--bs-secondary-color);
+  --bs-btn-disabled-bg: var(--bs-secondary-bg);
+  --bs-btn-disabled-border-color: var(--bs-border-color);
+}
+
+.btn-danger {
+  --bs-btn-color: var(--n-danger-contrast);
+  --bs-btn-bg: var(--n-danger);
+  --bs-btn-border-color: var(--n-danger);
+  --bs-btn-hover-color: var(--n-danger-contrast);
+  --bs-btn-hover-bg: color-mix(in srgb, var(--n-danger) 82%, black);
+  --bs-btn-hover-border-color: color-mix(in srgb, var(--n-danger) 82%, black);
+  --bs-btn-active-bg: color-mix(in srgb, var(--n-danger) 70%, black);
+  --bs-btn-active-border-color: color-mix(in srgb, var(--n-danger) 70%, black);
+}
+
+.btn-outline-danger {
+  --bs-btn-color: var(--n-danger);
+  --bs-btn-border-color: var(--n-danger);
+  --bs-btn-hover-color: var(--n-danger-contrast);
+  --bs-btn-hover-bg: var(--n-danger);
+  --bs-btn-hover-border-color: var(--n-danger);
+  --bs-btn-active-color: var(--n-danger-contrast);
+  --bs-btn-active-bg: var(--n-danger);
+}
+
+/* ── Chrome ────────────────────────────────────────────────── */
+
+::selection { background-color: var(--n-400); color: var(--n-950); }
+
+* { scrollbar-color: var(--n-500) transparent; scrollbar-width: thin; }
+::-webkit-scrollbar { width: .5rem; height: .5rem; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background-color: var(--n-500);
+  border-radius: 1rem;
+  border: .125rem solid var(--bs-body-bg);
+}
+::-webkit-scrollbar-thumb:hover { background-color: var(--n-400); }

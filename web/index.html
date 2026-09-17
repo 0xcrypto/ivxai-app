@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later | Copyright (C) 2026 0xcrypto -->
+<html lang="en" data-bs-theme="dark" data-bs-core="modern">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<!-- Everything executable comes from this origin. script-src carries only
+     'wasm-unsafe-eval': it lets WebLLM compile its WebAssembly, and allows no
+     eval() or new Function() — never 'unsafe-eval'. connect-src must stay
+     open: it is how your own provider endpoints are reached. frame-ancestors
+     is header-only, so serve it from your web server if you need it. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src *; form-action 'self'; base-uri 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
+<title>ivx/ai Chat</title>
+<meta name="description" content="A private, offline-first AI chat client for local and hosted models. Your keys and conversations never leave your browser.">
+<meta name="theme-color" content="#0a0a0a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ── Drawer: conversations ───────────────────────────────── -->
+  <aside id="drawer" class="drawer" aria-label="Conversations">
+    <header class="drawer-head">
+      <!-- The slash is branding, not punctuation: screen readers should say
+           "ivx AI Chat" rather than spelling the separator. -->
+      <span class="brand">
+        <span class="brand-mark" aria-hidden="true">ivx<span class="brand-slash">/</span>ai</span>
+        <span class="brand-sub" aria-hidden="true">Chat</span>
+        <span class="visually-hidden">ivx AI Chat</span>
+      </span>
+      <button id="btnCloseDrawer" class="icon-btn ri-close-line" type="button" aria-label="Close"></button>
+    </header>
+
+    <div class="drawer-search">
+      <input id="convSearch" class="form-control" type="search" placeholder="Search chats" autocomplete="off" aria-label="Search chats">
+    </div>
+
+    <nav id="convList" class="conv-list" aria-label="Conversations"></nav>
+
+    <footer class="drawer-foot">
+      <button id="btnSettings" class="foot-btn" type="button">
+        <span class="foot-icon ri-settings-3-line" aria-hidden="true"></span> Settings
+      </button>
+      <button id="btnStore" class="foot-btn" type="button">
+        <span class="foot-icon ri-store-2-line" aria-hidden="true"></span> Store
+      </button>
+      <button id="btnListMenu" class="foot-btn icon-only ri-more-line" type="button" aria-label="Chats: archive all, delete all" title="Archive or delete all chats"></button>
+    </footer>
+  </aside>
+  <div id="scrim" class="scrim"></div>
+
+  <!-- ── Chat ────────────────────────────────────────────────── -->
+  <main class="main">
+    <header class="topbar">
+      <button id="btnMenu" class="icon-btn ri-menu-line" type="button" aria-label="Chats"></button>
+      <h1 id="convTitle" class="topbar-title">New chat</h1>
+      <button id="btnNewChat" class="icon-btn ri-add-line" type="button" aria-label="New chat" title="New chat"></button>
+      <button id="btnChatMenu" class="icon-btn ri-more-line" type="button" aria-label="Chat actions" title="Chat actions"></button>
+    </header>
+
+    <div id="messages" class="messages" tabindex="-1"></div>
+
+    <div id="jump" class="jump" hidden>
+      <button id="btnJump" class="jump-btn ri-arrow-down-line" type="button" aria-label="Jump to latest"></button>
+    </div>
+
+    <form id="composer" class="composer" autocomplete="off">
+      <div class="composer-top">
+        <button id="modelChip" class="chip" type="button" aria-haspopup="dialog">
+          <span id="chipText" class="chip-text">No provider</span>
+          <span class="chip-caret ri-arrow-down-s-line" aria-hidden="true"></span>
+        </button>
+      </div>
+      <div class="composer-row">
+        <textarea id="input" class="composer-input" rows="1" placeholder="Message" aria-label="Message"></textarea>
+        <button id="btnSend" class="send-btn ri-arrow-up-line" type="submit" aria-label="Send"></button>
+        <button id="btnStop" class="send-btn send-stop ri-stop-fill" type="button" aria-label="Stop generating" hidden></button>
+      </div>
+      <p id="statusLine" class="status">AI can make mistakes. <button id="btnDisclaimer" class="status-link" type="button">Read this to understand how your data is processed</button></p>
+    </form>
+
+    <!-- Shown instead of the composer while a shared chat is being previewed -->
+    <div id="shareBar" class="composer share-bar" hidden>
+      <p class="group-note">Someone shared this chat with you — it is read-only here. Nothing is saved until you add it.</p>
+      <button id="btnAddShared" class="btn btn-primary btn-block" type="button">Add to my chats</button>
+    </div>
+  </main>
+</div>
+
+<!-- ── Bottom sheet: every panel in the app lives here ───────── -->
+<div id="sheetHost" class="sheet-host" hidden>
+  <div class="sheet-scrim" data-sheet-close></div>
+  <section id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-grip" aria-hidden="true"></div>
+    <header class="sheet-head">
+      <button id="sheetBack" class="icon-btn ri-arrow-left-s-line" type="button" aria-label="Back" hidden></button>
+      <h2 id="sheetTitle" class="sheet-title">Sheet</h2>
+      <button id="sheetClose" class="icon-btn ri-close-line" type="button" aria-label="Close" data-sheet-close></button>
+    </header>
+    <div id="sheetBody" class="sheet-body"></div>
+  </section>
+</div>
+
+<div id="snacks" class="snacks" aria-live="polite" aria-atomic="true"></div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

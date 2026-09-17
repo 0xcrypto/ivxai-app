@@ -1,0 +1,767 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 0xcrypto */
+
+/* ivx/ai Chat — mobile-first app shell.
+
+   One column at every width. Navigation is a drawer, every panel is a bottom
+   sheet, and touch targets are 44px. Halfmoon supplies the tokens, form
+   controls and list groups; the shell structures below are the app's own. */
+
+:root {
+  --tap: 2.75rem;               /* 44px: the smallest comfortable touch target */
+  --measure: 46rem;             /* reading column on wide screens */
+  --bar: 3.25rem;               /* top bar height */
+  --gutter: 1rem;
+  --radius-sheet: 1.25rem;
+  --radius-bubble: 1.125rem;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+[data-width="narrow"] { --measure: 40rem; }
+[data-width="wide"]   { --measure: 56rem; }
+[data-width="full"]   { --measure: none; }
+
+* { -webkit-tap-highlight-color: transparent; }
+
+html, body { height: 100%; }
+body {
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background-color: var(--bs-body-bg);
+}
+
+.app { height: 100dvh; display: flex; }
+
+/* ── Drawer ────────────────────────────────────────────────── */
+
+.drawer {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 40;
+  width: min(20rem, 86vw);
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bs-secondary-bg);
+  border-right: 1px solid var(--bs-border-color);
+  transform: translateX(-100%);
+  transition: transform .22s cubic-bezier(.2, .8, .2, 1);
+  padding-top: var(--safe-top);
+}
+.app.drawer-open .drawer { transform: translateX(0); }
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(10, 10, 10, .5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .22s ease;
+}
+.app.drawer-open .scrim { opacity: 1; pointer-events: auto; }
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  height: var(--bar);
+  padding: 0 .5rem 0 var(--gutter);
+}
+.brand { display: flex; align-items: baseline; gap: .3rem; }
+.brand-mark { font-weight: 600; font-size: 1.0625rem; letter-spacing: -.02em; color: var(--bs-emphasis-color); }
+/* The slash carries the brand, so it is set apart from the letters rather
+   than reading as punctuation between two words. */
+.brand-slash { color: var(--bs-secondary-color); margin: 0 .02em; }
+
+.brand-sub {
+  font-weight: 500; font-size: .6875rem; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--bs-secondary-color);
+}
+
+.drawer-search { padding: .25rem var(--gutter) .75rem; }
+
+.conv-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 .5rem .5rem;
+}
+.conv-group {
+  font-size: .6875rem; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--bs-secondary-color);
+  padding: 1rem .5rem .25rem;
+}
+.conv-item {
+  display: flex; align-items: center; gap: .5rem;
+  width: 100%; min-height: var(--tap);
+  padding: .5rem .625rem;
+  border: 0; border-radius: .75rem;
+  background: transparent; color: var(--bs-body-color);
+  text-align: left; cursor: pointer;
+}
+.conv-item:hover { background-color: var(--bs-tertiary-bg); }
+.conv-item.is-active { background-color: var(--bs-tertiary-bg); }
+.conv-item-title {
+  flex: 1 1 auto; min-width: 0;
+  font-size: .9375rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.conv-item.is-active .conv-item-title { font-weight: 600; }
+/* Agent-run threads read as secondary to the chat that opened them. */
+.conv-item.is-spawned .conv-item-title { color: var(--bs-secondary-color); font-weight: 400; }
+/* The rows that swap the list into another view — archived chats, one chat's
+   threads — sit at the list's edges and read as controls, not chats. */
+.conv-arch-toggle { color: var(--bs-secondary-color); font-size: .875rem; }
+/* Icon-font caret inside those rows; inline with the label. */
+.conv-caret { font-size: .75rem; margin-right: .25rem; }
+/* A chat with agent threads: the row is still the whole width and still opens
+   the chat, with the count laid over its right edge as a second target. */
+.conv-row { position: relative; }
+.conv-row .conv-item { padding-right: 3rem; }
+.conv-threads-badge {
+  position: absolute; inset: 0 0 0 auto;
+  display: flex; align-items: center; gap: .125rem;
+  padding: 0 .625rem;
+  border: 0; border-radius: 0 .75rem .75rem 0;
+  background: transparent; color: var(--bs-tertiary-color);
+  font-size: .75rem; line-height: 1; cursor: pointer;
+}
+.conv-threads-badge:hover { background-color: var(--bs-border-color); color: var(--bs-emphasis-color); }
+.conv-threads-badge > span { font-size: 1rem; }
+
+/* ── Store ─────────────────────────────────────────────── */
+/* Catalog rows are divs (they hold a nested button), so hover and cursor
+   need stating here — button.item's styles don't reach them. */
+.item.is-link { cursor: pointer; }
+.item.is-link:hover { background-color: var(--bs-tertiary-bg); }
+.market-search { flex: 1 1 auto; min-width: 0; }
+.market-title { display: flex; align-items: center; gap: .4rem; }
+.market-title > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.market-meta { font-size: .75rem; color: var(--bs-tertiary-color); }
+.market-chips { display: flex; flex-wrap: wrap; gap: .5rem; padding: 0 .25rem .25rem; }
+/* Search and filters as one block at the top of the Store, so the list below
+   them is the only thing that moves. Two classes deep on purpose: it has to
+   beat .sheet-search's own margin, and a sticky element with a negative top
+   margin parks that much lower — which is exactly the gap rows would then
+   scroll through. */
+.sheet-search.market-head {
+  display: flex; flex-direction: column; gap: .625rem;
+  margin: 0 0 .75rem;
+  padding: .625rem 0;
+}
+.market-head .market-chips { padding-bottom: 0; }
+.market-sources { padding-top: .25rem; text-align: center; }
+.market-chip {
+  min-height: 2rem; padding: 0 .875rem;
+  border: 1px solid var(--bs-border-color); border-radius: 1rem;
+  background: transparent; color: var(--bs-secondary-color);
+  font-size: .8125rem; cursor: pointer;
+}
+.market-chip:hover { background-color: var(--bs-secondary-bg); }
+.market-chip.is-on {
+  background-color: var(--bs-secondary-bg);
+  color: var(--bs-emphasis-color); border-color: var(--bs-secondary-color);
+}
+.market-go {
+  flex: 0 0 auto; min-height: 2rem; padding: 0 .875rem;
+  border: 1px solid var(--bs-border-color); border-radius: 1rem;
+  background: transparent; color: var(--bs-body-color);
+  font-size: .8125rem; cursor: pointer;
+}
+.market-go:hover { background-color: var(--bs-secondary-bg); }
+.market-go.is-done { color: var(--bs-secondary-color); border-style: dashed; cursor: default; }
+.market-go.is-done:hover { background-color: transparent; }
+.conv-empty { padding: 1.5rem .5rem; font-size: .875rem; color: var(--bs-secondary-color); text-align: center; }
+
+.drawer-foot {
+  display: flex; gap: .5rem;
+  border-top: 1px solid var(--bs-border-color);
+  padding: .5rem .5rem calc(.5rem + var(--safe-bottom));
+}
+.foot-btn {
+  display: flex; align-items: center; gap: .625rem;
+  flex: 1 1 auto; min-width: 0; min-height: var(--tap);
+  padding: 0 .625rem;
+  border: 0; border-radius: .75rem;
+  background: transparent; color: var(--bs-body-color);
+  font-size: .9375rem; text-align: left;
+}
+.foot-btn.icon-only {
+  flex: 0 0 auto; justify-content: center;
+  padding: 0 .75rem; font-size: 1.05rem;
+}
+.foot-btn:hover { background-color: var(--bs-tertiary-bg); }
+.foot-icon { font-size: 1.05rem; line-height: 1; }
+
+/* ── Main column ───────────────────────────────────────────── */
+
+.main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; position: relative; }
+
+.topbar {
+  display: flex; align-items: center; gap: .25rem;
+  height: calc(var(--bar) + var(--safe-top));
+  padding: var(--safe-top) .375rem 0;
+  border-bottom: 1px solid var(--bs-border-color);
+  background-color: var(--bs-body-bg);
+}
+.topbar-title {
+  flex: 1 1 auto; min-width: 0;
+  margin: 0 .25rem;
+  font-size: 1rem; font-weight: 600; letter-spacing: -.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: center;
+}
+
+.icon-btn {
+  flex: 0 0 auto;
+  display: inline-grid; place-items: center;
+  width: var(--tap); height: var(--tap);
+  border: 0; border-radius: .75rem;
+  background: transparent; color: var(--bs-body-color);
+  font-size: 1.125rem; line-height: 1;
+}
+.icon-btn:hover { background-color: var(--bs-tertiary-bg); }
+.icon-btn:active { background-color: var(--bs-tertiary-bg); transform: scale(.96); }
+.icon-btn:disabled { opacity: .4; }
+
+/* ── Messages ──────────────────────────────────────────────── */
+
+.messages {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 1rem 0 .5rem;
+  scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) { .messages { scroll-behavior: auto; } }
+
+.thread {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  display: flex; flex-direction: column; gap: 1.25rem;
+}
+
+.msg { display: flex; flex-direction: column; }
+.msg-user { align-items: flex-end; }
+
+.bubble {
+  max-width: 85%;
+  padding: .625rem .875rem;
+  border-radius: var(--radius-bubble);
+  background-color: var(--bs-tertiary-bg);
+  font-size: 1rem; line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prose {
+  font-size: 1rem; line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.prose > :first-child { margin-top: 0; }
+.prose > :last-child { margin-bottom: 0; }
+.prose p { margin: 0 0 .75rem; }
+.prose ul, .prose ol { margin: 0 0 .75rem; padding-left: 1.35rem; }
+.prose li { margin-bottom: .25rem; }
+.prose h1, .prose h2, .prose h3, .prose h4 { margin: 1.25rem 0 .5rem; line-height: 1.3; }
+.prose h1 { font-size: 1.3rem; } .prose h2 { font-size: 1.15rem; }
+.prose h3 { font-size: 1.05rem; } .prose h4 { font-size: 1rem; }
+.prose blockquote {
+  margin: 0 0 .75rem; padding: .125rem .875rem;
+  border-left: 2px solid var(--bs-border-color); color: var(--bs-secondary-color);
+}
+.prose a { color: var(--bs-link-color); }
+.prose code {
+  font-size: .875em; padding: .1em .35em; border-radius: .375rem;
+  background-color: var(--bs-secondary-bg);
+}
+.prose hr { border-color: var(--bs-border-color); }
+.prose table {
+  width: 100%; margin-bottom: .75rem; border-collapse: collapse; font-size: .9375rem;
+  display: block; overflow-x: auto;
+}
+.prose th, .prose td { border: 1px solid var(--bs-border-color); padding: .375rem .5rem; text-align: left; }
+.prose th { background-color: var(--bs-secondary-bg); }
+
+.code-block { margin: 0 0 .75rem; border-radius: .75rem; overflow: hidden; background-color: var(--bs-secondary-bg); }
+.code-head {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .375rem .5rem .375rem .75rem;
+  font-size: .75rem; color: var(--bs-secondary-color);
+}
+.code-copy {
+  margin-left: auto;
+  min-height: 1.75rem; padding: 0 .625rem;
+  border: 0; border-radius: .5rem;
+  background-color: var(--bs-tertiary-bg); color: var(--bs-body-color);
+  font-size: .75rem;
+}
+.code-block pre { margin: 0; padding: 0 .75rem .75rem; overflow-x: auto; font-size: .875rem; line-height: 1.55; }
+.code-block pre code { background: none; padding: 0; font-size: inherit; }
+
+/* ── Syntax highlighting ───────────────────────────────────
+   highlight.js marks up far more classes than a theme needs. These are the
+   ones that carry meaning here; everything else inherits the body colour,
+   which is the right answer for it. Colours come from the theme's --code-*
+   tokens, so light and dark are one definition. */
+.hljs-comment, .hljs-quote { color: var(--code-comment); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag,
+.hljs-formula, .hljs-subst { color: var(--code-keyword); }
+.hljs-string, .hljs-regexp, .hljs-char.escape_,
+.hljs-symbol, .hljs-bullet, .hljs-link, .hljs-selector-attr,
+.hljs-selector-pseudo { color: var(--code-string); }
+.hljs-number, .hljs-attr, .hljs-attribute, .hljs-variable,
+.hljs-template-variable, .hljs-selector-id, .hljs-selector-class { color: var(--code-number); }
+.hljs-title, .hljs-title.function_, .hljs-name,
+.hljs-section, .hljs-built_in { color: var(--code-func); }
+/* Not .hljs-tag: in XML that wraps the whole element, brackets and all, and
+   tinting those loses the shape of the markup. Its .hljs-name carries it. */
+.hljs-title.class_, .hljs-type, .hljs-class .hljs-title { color: var(--code-type); }
+.hljs-meta, .hljs-meta .hljs-keyword, .hljs-comment .hljs-doctag { color: var(--code-meta); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+/* Diffs are the one place a line's colour is the whole message. */
+.hljs-addition { color: var(--code-added); }
+.hljs-deletion { color: var(--code-removed); }
+
+.reasoning { margin-bottom: .625rem; }
+.reasoning summary {
+  cursor: pointer; list-style: none;
+  display: inline-flex; align-items: center; gap: .375rem;
+  min-height: 1.75rem; padding: 0 .625rem;
+  border-radius: .5rem; background-color: var(--bs-secondary-bg);
+  color: var(--bs-secondary-color); font-size: .8125rem;
+}
+.reasoning summary::-webkit-details-marker { display: none; }
+.reasoning-body {
+  margin-top: .5rem; padding-left: .75rem;
+  border-left: 2px solid var(--bs-border-color);
+  color: var(--bs-secondary-color); font-size: .9375rem; white-space: pre-wrap;
+}
+
+/* The record of a tool round: which agent was asked, with what, and what it
+   answered. Same shape as reasoning, since it reads as machine-side context. */
+.tool-ask { margin-bottom: .625rem; }
+.tool-ask summary {
+  cursor: pointer; list-style: none;
+  display: inline-flex; align-items: center; gap: .5rem;
+  min-height: 1.75rem; padding: 0 .625rem;
+  border-radius: .5rem; background-color: var(--bs-secondary-bg);
+  color: var(--bs-secondary-color); font-size: .8125rem;
+}
+.tool-ask summary::-webkit-details-marker { display: none; }
+.tool-ask-open {
+  border: 0; background: none; padding: 0; cursor: pointer;
+  color: var(--bs-primary); font: inherit; font-size: .8125rem;
+}
+.tool-ask-body {
+  margin-top: .5rem; padding-left: .75rem;
+  border-left: 2px solid var(--bs-border-color);
+  font-size: .9375rem;
+}
+.tool-ask-prompt {
+  color: var(--bs-secondary-color); white-space: pre-wrap;
+  margin-bottom: .5rem;
+}
+.tool-ask-answer { white-space: pre-wrap; }
+
+/* Meta and actions stay hidden until a message is tapped. */
+.msg-foot {
+  display: none;
+  align-items: center; gap: .125rem;
+  margin-top: .375rem;
+}
+.msg.is-open .msg-foot { display: flex; flex-wrap: wrap; }
+.msg-meta {
+  margin-right: auto;
+  font-size: .75rem; color: var(--bs-secondary-color);
+  padding-right: .5rem;
+}
+.msg-action {
+  min-height: 2.25rem; padding: 0 .75rem;
+  border: 0; border-radius: .5rem;
+  background: transparent; color: var(--bs-secondary-color);
+  font-size: .8125rem;
+}
+.msg-action:hover { background-color: var(--bs-tertiary-bg); color: var(--bs-body-color); }
+.msg-action.danger { color: var(--bs-danger); }
+
+.msg-error .prose { color: var(--bs-danger-text-emphasis); }
+.msg-note { margin: 0; font-size: .9375rem; color: var(--bs-secondary-color); }
+
+.caret {
+  display: inline-block; width: .5em; height: 1.05em;
+  margin-left: .1em; vertical-align: text-bottom;
+  background-color: currentColor;
+  animation: blink 1s steps(2, start) infinite;
+}
+@keyframes blink { to { visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
+
+/* Empty state */
+.welcome {
+  max-width: var(--measure); margin: 0 auto;
+  padding: 2.5rem var(--gutter);
+  display: flex; flex-direction: column; gap: .5rem;
+}
+.welcome h2 { margin: 0; font-size: 1.5rem; letter-spacing: -.02em; }
+.welcome p { margin: 0 0 1rem; color: var(--bs-secondary-color); }
+.starter {
+  min-height: var(--tap);
+  padding: .75rem 1rem;
+  border: 1px solid var(--bs-border-color); border-radius: .875rem;
+  background-color: var(--bs-secondary-bg); color: var(--bs-body-color);
+  font-size: .9375rem; text-align: left;
+}
+.starter:hover { background-color: var(--bs-tertiary-bg); }
+
+/* ── Jump to latest ────────────────────────────────────────── */
+
+.jump {
+  position: absolute; left: 0; right: 0; bottom: 8.5rem;
+  display: flex; justify-content: center; pointer-events: none;
+}
+.jump-btn {
+  pointer-events: auto;
+  display: grid; place-items: center;
+  width: 2.5rem; height: 2.5rem;
+  border: 1px solid var(--bs-border-color); border-radius: 50%;
+  background-color: var(--bs-secondary-bg); color: var(--bs-body-color);
+  box-shadow: 0 .25rem .75rem var(--n-shadow);
+}
+
+/* ── Composer ──────────────────────────────────────────────── */
+
+.composer {
+  border-top: 1px solid var(--bs-border-color);
+  background-color: var(--bs-body-bg);
+  padding: .5rem var(--gutter) calc(.5rem + var(--safe-bottom));
+}
+.composer > * { max-width: var(--measure); margin-inline: auto; }
+
+/* Halfmoon v2 has no .btn-block of its own; in sheets .sheet-actions' flex
+   column stretches buttons, but the share bar has no flex parent, so the
+   button has to become a block to be centered by the auto margins above. */
+.share-bar .btn-block { display: block; width: 100%; }
+
+.composer-top { display: flex; margin-bottom: .5rem; }
+.chip {
+  display: inline-flex; align-items: center; gap: .375rem;
+  min-height: 2rem;
+  /* .875rem matches the composer's text inset, so the chip label and the
+     placeholder below it start on the same vertical line. */
+  padding: 0 .875rem;
+  border: 1px solid var(--bs-border-color); border-radius: 1rem;
+  background: transparent; color: var(--bs-secondary-color);
+  font-size: .8125rem; max-width: 100%;
+}
+.chip:hover { background-color: var(--bs-secondary-bg); color: var(--bs-body-color); }
+.chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-caret { font-size: .75rem; }
+
+.composer-row {
+  display: flex; align-items: flex-end; gap: .5rem;
+  padding: .25rem .25rem .25rem .875rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 1.5rem;
+  background-color: var(--bs-secondary-bg);
+}
+.composer-row:focus-within { border-color: var(--n-500); }
+
+.composer-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0; background: transparent; color: var(--bs-body-color);
+  /* 1rem keeps iOS Safari from zooming the viewport on focus. */
+  font-size: 1rem; font-family: inherit; line-height: 1.5;
+  padding: .625rem 0;
+  max-height: 40dvh; min-height: 1.5rem;
+  resize: none; outline: none;
+}
+.composer-input::placeholder { color: var(--bs-tertiary-color); }
+
+/* Matches the one-line height of .composer-input exactly. The row aligns to
+   flex-end so the button stays at the bottom as the textarea grows, which
+   means any size below that height would hang the difference above it. */
+.send-btn {
+  flex: 0 0 auto;
+  display: grid; place-items: center;
+  width: var(--tap); height: var(--tap);
+  border: 0; border-radius: 50%;
+  background-color: var(--n-invert-bg); color: var(--n-invert-fg);
+  font-size: 1rem; line-height: 1;
+}
+.send-btn:disabled { opacity: .35; }
+.send-stop { background-color: var(--bs-danger); color: var(--n-danger-contrast); font-size: .75rem; }
+
+/* A standing notice rather than a per-response readout: the model, token count
+   and whether it was stopped already sit on each message, and this is the one
+   thing worth saying on every screen. The long version is a tap away. */
+.status {
+  margin: .375rem auto 0;
+  max-width: 68ch;
+  font-size: .6875rem; line-height: 1.45;
+  color: var(--bs-tertiary-color); text-align: center;
+  text-wrap: pretty;
+}
+.status-link {
+  padding: 0; border: 0; background: none;
+  font: inherit; color: inherit;
+  text-decoration: underline; text-underline-offset: .15em;
+  cursor: pointer;
+}
+.status-link:hover { color: var(--bs-secondary-color); }
+
+/* ── Bottom sheet ──────────────────────────────────────────── */
+
+.sheet-host { position: fixed; inset: 0; z-index: 60; }
+.sheet-host[hidden] { display: none; }
+.sheet-scrim {
+  position: absolute; inset: 0;
+  background: rgba(10, 10, 10, .55);
+  opacity: 0; transition: opacity .24s ease;
+}
+.sheet-host.open .sheet-scrim { opacity: 1; }
+
+.sheet {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; flex-direction: column;
+  max-height: 88dvh;
+  background-color: var(--bs-body-bg);
+  border-top: 1px solid var(--bs-border-color);
+  border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  transform: translateY(100%);
+  transition: transform .28s cubic-bezier(.2, .8, .2, 1);
+  padding-bottom: var(--safe-bottom);
+}
+.sheet-host.open .sheet { transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .sheet, .sheet-scrim, .drawer, .scrim { transition: none; }
+}
+
+/* A page, not a tray. The Store is somewhere you go and stay a while — a list
+   to scroll, a search to redo — so it takes the whole viewport rather than
+   hovering over a chat nobody is reading behind it. Same stack underneath:
+   a pushed screen and a confirmation still work exactly as they do in the
+   tray, which is why this is a modifier and not a second component. */
+.sheet-host.is-page .sheet-scrim { display: none; }
+.sheet-host.is-page .sheet {
+  top: 0; left: 0; right: 0; bottom: 0;
+  width: auto; max-height: none;
+  border: 0; border-radius: 0;
+  transform: translateY(1.5rem);
+  opacity: 0;
+  transition: transform .24s cubic-bezier(.2, .8, .2, 1), opacity .18s ease;
+}
+.sheet-host.is-page.open .sheet { transform: none; opacity: 1; }
+.sheet-host.is-page .sheet-grip { display: none; }
+.sheet-host.is-page .sheet-head { padding-top: calc(var(--safe-top, 0px) + .25rem); }
+/* Full bleed on a phone; a column that stays readable on a monitor. No top
+   padding: a sticky header inside sits below it, and the strip above it is
+   then a window onto whatever is scrolling past. */
+.sheet-host.is-page .sheet-body {
+  width: 100%; max-width: 46rem;
+  margin: 0 auto;
+  padding-top: 0;
+}
+
+.sheet-grip {
+  width: 2.25rem; height: .25rem;
+  margin: .5rem auto .125rem;
+  border-radius: 1rem;
+  background-color: var(--bs-border-color);
+}
+.sheet-head {
+  display: flex; align-items: center; gap: .25rem;
+  padding: .25rem .375rem;
+}
+.sheet-title {
+  flex: 1 1 auto; min-width: 0;
+  margin: 0; padding: 0 .25rem;
+  font-size: 1.0625rem; font-weight: 600; text-align: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Hidden head buttons keep their slot so the title stays centred. */
+.sheet-head .icon-btn[hidden] {
+  display: inline-grid;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.sheet-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: .25rem var(--gutter) 1.25rem;
+}
+
+.screen { animation: screen-in .22s cubic-bezier(.2, .8, .2, 1); }
+.screen.back { animation-name: screen-back; }
+/* Re-rendered in place, not navigated to. */
+.screen.still { animation: none; }
+@keyframes screen-in { from { opacity: 0; transform: translateX(1.25rem); } }
+@keyframes screen-back { from { opacity: 0; transform: translateX(-1.25rem); } }
+@media (prefers-reduced-motion: reduce) { .screen { animation: none; } }
+
+/* Sticks to the top of the sheet body so a few hundred models stay one
+   keystroke away rather than a scroll back up. The negative top margin pulls
+   it over the body's own padding, so nothing shows through above it. */
+.sheet-search {
+  position: sticky; top: 0; z-index: 2;
+  margin: -.25rem 0 1rem;
+  padding: .25rem 0 .5rem;
+  background-color: var(--bs-body-bg);
+}
+.sheet-search .group-note { padding-bottom: 0; }
+
+/* ── Sheet content primitives ──────────────────────────────── */
+
+.group { margin-bottom: 1.5rem; }
+.group-label {
+  padding: 0 .25rem .375rem;
+  font-size: .75rem; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--bs-secondary-color);
+}
+.group-note {
+  padding: .5rem .25rem 0;
+  font-size: .8125rem; line-height: 1.5; color: var(--bs-secondary-color);
+}
+.group-note code { font-size: .9em; }
+/* A caution, not a caption: boxed so it is read before the rows it is about. */
+.group-note.warn {
+  margin-top: .5rem;
+  padding: .625rem .75rem;
+  border: 1px solid var(--n-warn-border);
+  border-radius: var(--bs-border-radius-sm);
+  background-color: var(--n-warn-bg);
+  color: var(--n-warn-text);
+}
+
+.item-list {
+  border: 1px solid var(--bs-border-color);
+  border-radius: .875rem;
+  overflow: hidden;
+  background-color: var(--bs-secondary-bg);
+}
+.item {
+  display: flex; align-items: center; gap: .75rem;
+  width: 100%; min-height: var(--tap);
+  padding: .625rem .875rem;
+  border: 0; border-bottom: 1px solid var(--bs-border-color);
+  background: transparent; color: var(--bs-body-color);
+  font-size: .9375rem; text-align: left;
+}
+.item-list > .item:last-child,
+.item-list > .item.is-last { border-bottom: 0; }
+button.item:hover, a.item:hover { background-color: var(--bs-tertiary-bg); }
+a.item { text-decoration: none; color: var(--bs-body-color); }
+.item-main { flex: 1 1 auto; min-width: 0; }
+.item-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-sub {
+  display: block; margin-top: .125rem;
+  font-size: .8125rem; color: var(--bs-secondary-color);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* On a detail screen the sub-line is the content, not a preview of it. */
+.detail-value { overflow-wrap: anywhere; white-space: normal; overflow: visible; }
+.item-value { flex: 0 0 auto; color: var(--bs-secondary-color); font-size: .875rem; }
+.item-chevron { flex: 0 0 auto; color: var(--bs-tertiary-color); font-size: 1.125rem; line-height: 1; }
+.item-check { flex: 0 0 auto; width: 1.25rem; text-align: center; color: var(--bs-emphasis-color); }
+.item.danger { color: var(--bs-danger); }
+.item.is-active .item-title { font-weight: 600; }
+
+.field { margin-bottom: 1rem; }
+/* A field sitting inside a grouped row still has to fill it. */
+.item > .field { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
+.field .form-control, .field .form-select, .field textarea { width: 100%; }
+.field-label {
+  display: block; margin-bottom: .375rem; padding: 0 .25rem;
+  font-size: .8125rem; color: var(--bs-secondary-color);
+}
+.field-note { margin: .375rem .25rem 0; font-size: .8125rem; color: var(--bs-secondary-color); }
+
+.dot { width: .5rem; height: .5rem; border-radius: 50%; background-color: var(--bs-tertiary-color); flex: 0 0 auto; }
+.dot.on { background-color: var(--bs-emphasis-color); }
+.dot.bad { background-color: var(--bs-danger); }
+
+.tag {
+  flex: 0 0 auto;
+  padding: .0625rem .375rem;
+  border: 1px solid var(--bs-border-color); border-radius: 1rem;
+  font-size: .625rem; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--bs-secondary-color);
+}
+
+.sheet-actions { display: flex; flex-direction: column; gap: .5rem; margin-top: 1rem; }
+
+/* ── Toasts ────────────────────────────────────────────────── */
+
+.snacks {
+  position: fixed; z-index: 70;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(1rem + var(--safe-bottom));
+  width: min(28rem, calc(100vw - 2rem));
+  display: flex; flex-direction: column; gap: .5rem;
+}
+.snack {
+  padding: .75rem 1rem;
+  border-radius: .875rem;
+  background-color: var(--n-invert-bg); color: var(--n-invert-fg);
+  font-size: .875rem; line-height: 1.4;
+  box-shadow: 0 .5rem 1.5rem var(--n-shadow);
+  animation: snack-in .2s ease;
+}
+.snack.err { background-color: var(--bs-danger); color: var(--n-danger-contrast); }
+
+/* The update snack: text, the action, and a way out of it. */
+.snack-ask { display: flex; align-items: center; gap: .75rem; }
+.snack-ask-text { flex: 1 1 auto; }
+.snack-ask-go {
+  flex: 0 0 auto;
+  padding: .3125rem .75rem;
+  border: 0; border-radius: .5rem;
+  background-color: var(--n-invert-fg); color: var(--n-invert-bg);
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+.snack-ask-go:hover { opacity: .85; }
+.snack-ask-x {
+  flex: 0 0 auto;
+  width: 1.5rem; height: 1.5rem; padding: 0;
+  border: 0; border-radius: .375rem;
+  background: none; color: inherit;
+  font-size: 1.125rem; line-height: 1; cursor: pointer; opacity: .6;
+}
+.snack-ask-x:hover { opacity: 1; }
+@keyframes snack-in { from { opacity: 0; transform: translateY(.5rem); } }
+
+/* ── Wider screens ─────────────────────────────────────────── */
+
+@media (min-width: 48rem) {
+  .sheet {
+    left: 50%; right: auto;
+    transform: translate(-50%, 100%);
+    width: min(34rem, calc(100vw - 3rem));
+    bottom: 1.5rem;
+    border: 1px solid var(--bs-border-color);
+    border-radius: var(--radius-sheet);
+    max-height: min(80dvh, 44rem);
+  }
+  .sheet-host.open .sheet { transform: translate(-50%, 0); }
+  .sheet-host.is-page .sheet { left: 0; transform: translateY(1.5rem); }
+  .sheet-host.is-page.open .sheet { transform: none; }
+  .snacks { bottom: 1.5rem; }
+  .jump { bottom: 9.5rem; }
+}
+
+/* ── first-run introduction ────────────────────────────────── */
+
+.intro { display: flex; flex-direction: column; gap: 1.125rem; padding-top: .25rem; }
+.intro-title { font-weight: 600; font-size: .9375rem; }
+.intro-body {
+  margin: .25rem 0 0;
+  font-size: .875rem; line-height: 1.6;
+  color: var(--bs-secondary-color);
+}
