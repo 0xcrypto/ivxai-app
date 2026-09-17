@@ -24,6 +24,7 @@ import * as store from './store.js';
 import * as vault from './vault.js';
 import * as api from './providers.js';
 import * as bridge from './bridge.js';
+import * as mcp from './mcp.js';
 import * as share from './share.js';
 import { renderMarkdown } from './markdown.js';
 import { loadHighlighter, repaintCodeBlocks } from './highlight.js';
@@ -89,6 +90,7 @@ async function boot() {
   await bridge.init();
   state.providers = await store.kvGet('providers', []);
   state.defaults = { ...DEFAULTS, ...(await store.kvGet('defaults', {})) };
+  await mcp.init();
 
   if (!state.providers.length) {
     // WebLLM leads — the model runs in this very browser, with no server, no
@@ -321,10 +323,15 @@ const field = (label, control) => el('div', { class: 'field' }, [
    back as the next request's history so the model can finish with it. */
 
 const ASK_RE = /<ask\s+agent="([^"]*)"\s*>([\s\S]*?)<\/ask>/g;
+const TOOL_RE = /<tool\s+name="([^"]*)"\s*>([\s\S]*?)<\/tool>/g;
 
 /** The complete ask blocks in a reply, in order. */
 const askCalls = content => [...String(content || '').matchAll(ASK_RE)]
   .map(m => ({ agent: m[1].trim(), prompt: m[2].trim() }));
+
+/** The complete tool calls in a reply, in order. */
+const mcpCalls = content => [...String(content || '').matchAll(TOOL_RE)]
+  .map(m => ({ name: m[1].trim(), args: m[2].trim() }));
 
 /** Splits a reply for display: ask blocks are the model talking to the tool
     plumbing, not to the reader, so they stay out of the visible text — the
@@ -332,15 +339,25 @@ const askCalls = content => [...String(content || '').matchAll(ASK_RE)]
 function splitAskBlocks(content) {
   const out = [];
   let last = 0;
-  for (const m of String(content || '').matchAll(ASK_RE)) {
+  const blocks = [
+    ...[...String(content || '').matchAll(ASK_RE)].map(m => ({ m, kind: 'ask' })),
+    ...[...String(content || '').matchAll(TOOL_RE)].map(m => ({ m, kind: 'tool' })),
+  ].sort((a, b) => a.m.index - b.m.index);
+  for (const { m, kind } of blocks) {
     const head = content.slice(last, m.index);
     if (head.trim()) out.push({ text: head });
-    out.push({ ask: true, agent: m[1], prompt: m[2] });
+    if (kind === 'ask') out.push({ ask: true, agent: m[1], prompt: m[2] });
+    else out.push({ toolCall: true, name: m[1], args: m[2] });
     last = m.index + m[0].length;
   }
   const tail = content.slice(last);
-  const cut = tail.indexOf('<ask');          // an unfinished block mid-stream
-  if (cut >= 0) {
+  const cut = Math.min(
+    ...['<ask', '<tool'].map(tag => {
+      const at = tail.indexOf(tag);
+      return at < 0 ? Infinity : at;
+    }),
+  );
+  if (Number.isFinite(cut)) {
     const head = tail.slice(0, cut);
     if (head.trim()) out.push({ text: head });
   } else if (tail.trim()) {
@@ -350,21 +367,23 @@ function splitAskBlocks(content) {
 }
 
 const MAX_TOOL_ROUNDS = 3;
+const MAX_MCP_ROUNDS = 8;
 
-/** The system-prompt section that teaches the tool, or '' when it is off.
-    Sub-threads never receive it — their runs go straight to streamChat — so
-    a delegated question cannot spawn more delegation. */
+/** The system-prompt section that teaches the tools, or '' when both are off.
+    Sub-threads never receive it — their runs go straight to streamChat — so a
+    delegated question cannot spawn more delegation. */
 function toolsPrompt(agent) {
-  if (!state.agents.length || !agent || agent.tools === false) return '';
+  if (!agent || agent.tools === false) return '';
   const list = state.agents.map(a => `- ${a.name}`).join('\n');
-  return '\n\n# Asking other agents\n' +
+  const ask = list ? ('\n\n# Asking other agents\n' +
     'You may delegate a question to a separate agent thread. It runs with its own ' +
     'context and you receive only its answer, so put everything it needs inside the question.\n' +
     'To ask, output exactly this block:\n' +
     '<ask agent="Agent name">\nYour question for that agent.\n</ask>\n' +
     'Use it sparingly, only when another agent would answer better. At most three questions per reply; ' +
     'after each answer arrives you will be asked to continue.\n' +
-    `Available agents:\n${list}`;
+    `Available agents:\n${list}`) : '';
+  return ask;
 }
 
 /** Run one delegated question in its own thread with its own agent, and
@@ -428,6 +447,34 @@ async function executeAskTool(call, controller, parentConvId) {
   await store.putConversation(thread);
   await refreshConversations();
   return { agentName: target.name, agentId: target.id, threadId: thread.id, prompt, answer };
+}
+
+/** Run one MCP tool call, and return what it came back with — or a failure
+    the model can read and react to, the way a failed tool should. */
+async function executeMcpTool(call, controller) {
+  const resolved = mcp.resolveToolCall(call);
+  if (!resolved) {
+    return { server: '', tool: call.name || '', prompt: '',
+      answer: `No tool answers to “${call.name}”. Check the exact names in the tool list.` };
+  }
+  const { server, tool } = resolved;
+  let args = {};
+  let argText = '{}';
+  try {
+    argText = call.args || '{}';
+    args = JSON.parse(argText);
+    if (!args || typeof args !== 'object' || Array.isArray(args)) {
+      return { server: server.name, tool, prompt: argText,
+        answer: 'The tool arguments must be a JSON object with the names in the argument list.' };
+    }
+  } catch {
+    return { server: server.name, tool, prompt: argText,
+      answer: 'The arguments were not valid JSON, so the tool did not run.' };
+  }
+  const result = await mcp.callTool(server, tool, args, controller.signal);
+  return { server: server.name, tool, prompt: JSON.stringify(args, null, 2),
+    answer: result.error ? `The tool failed: ${result.error}\n${result.text}`.trim() : result.text,
+    error: Boolean(result.error) };
 }
 
 /** Called whenever a provider is configured (added, or gains a default model):
@@ -778,6 +825,23 @@ function paintBody(body, msg) {
     return;
   }
   if (msg.role === 'tool') {
+    if (msg.mcpTool) {
+      // The record of an MCP tool round: which server and tool ran, with what
+      // arguments, and what came back.
+      body.append(el('details', { class: 'tool-ask' }, [
+        el('summary', { class: 'tool-ask-head' }, [
+          el('span', {
+            class: 'tool-ask-label',
+            text: `${msg.mcpError ? 'Failed' : 'Used'} ${msg.mcpServer} · ${msg.mcpTool}`,
+          }),
+        ]),
+        el('div', { class: 'tool-ask-body' }, [
+          msg.mcpArgs ? el('div', { class: 'tool-ask-prompt', text: msg.mcpArgs }) : null,
+          el('div', { class: 'tool-ask-answer', text: msg.content }),
+        ]),
+      ]));
+      return;
+    }
     // The answer an agent thread sent back to the model. The card is the
     // record of the question; the thread itself holds the full exchange.
     body.append(el('details', { class: 'tool-ask' }, [
@@ -807,10 +871,10 @@ function paintBody(body, msg) {
     return;
   }
 
-  // Ask blocks are protocol, not prose; what the model actually said is
-  // everything around them.
+  // Ask blocks and tool calls are protocol, not prose; what the model
+  // actually said is everything around them.
   const visible = splitAskBlocks(msg.content)
-    .filter(s => !s.ask).map(s => s.text).join('\n\n').trim();
+    .filter(s => !s.ask && !s.toolCall).map(s => s.text).join('\n\n').trim();
   const holder = el('div', { html: renderMarkdown(visible) });
   body.append(holder);
 
@@ -928,7 +992,10 @@ function historyForRequest() {
   // A tool answer reads to the provider as a user-side note in the
   // conversation; every provider understands that shape.
   return slice.map(m => m.role === 'tool'
-    ? { role: 'user', content: `[The ${m.agent || 'agent'} was asked separately and answered:]\n${m.content}` }
+    ? m.mcpTool
+      ? { role: 'user', content: `[The ${m.mcpServer} tool "${m.mcpTool}" ` +
+          (m.mcpError ? 'failed and answered' : 'was called and returned') + `:]\n${m.content}` }
+      : { role: 'user', content: `[The ${m.agent || 'agent'} was asked separately and answered:]\n${m.content}` }
     : { role: m.role, content: m.content });
 }
 
@@ -990,6 +1057,10 @@ async function runCompletion() {
   state.streaming = { controller, id: null, convId };
   setBusy(true);
 
+  // MCP tools are offered when configured servers answer; the catalog is
+  // cached, so this is usually a no-op and costs nothing to check.
+  const toolSection = agent?.tools === false ? '' : await mcp.promptSection();
+
   // One assistant message per round. Tool answers arrive between rounds as
   // tool messages; the next round sees them through historyForRequest. The
   // reply is done when the model produces a round with no ask blocks.
@@ -1011,7 +1082,8 @@ async function runCompletion() {
   };
 
   try {
-    let ran = 0;   // tool executions so far in this reply
+    let ran = 0;       // agent delegations so far in this reply
+    let ranMcp = 0;    // MCP tool calls so far in this reply
     for (;;) {
       const assistant = store.newMessage(convId, 'assistant', '', nextSeq(), {
         model, providerId: provider.id, agentId: agent?.id ?? null, pending: true,
@@ -1029,7 +1101,8 @@ async function runCompletion() {
         model,
         system: (agent
           ? (agent.systemPrompt || '')
-          : (state.conv.systemPrompt || state.defaults.systemPrompt || '')) + toolsPrompt(agent),
+          : (state.conv.systemPrompt || state.defaults.systemPrompt || ''))
+          + toolsPrompt(agent) + (agent?.tools === false ? '' : toolSection),
         messages: historyForRequest(),
         temperature: agent ? agent.temperature : state.conv.temperature,
         maxTokens: agent ? agent.maxTokens : state.conv.maxTokens,
@@ -1055,17 +1128,23 @@ async function runCompletion() {
         if (state.pinned) scrollToBottom();
       }
 
-      // Tools: the reply may delegate questions to other agent threads.
-      if (!state.agents.length || agent?.tools === false || ran >= MAX_TOOL_ROUNDS) break;
-      const calls = askCalls(assistant.content).slice(0, MAX_TOOL_ROUNDS - ran);
-      if (!calls.length) break;
-      ran += calls.length;
-      // The round's visible text is protocol fragments around the ask blocks;
-      // without this it would read as an empty reply.
-      assistant.intermediate = true;
-      await store.putMessage(assistant);
+      // Tools: the reply may delegate questions to agent threads and call MCP
+      // tools; the next round sees the answers through historyForRequest. The
+      // reply is done when a round produces neither.
+      if (agent?.tools === false) break;
+      const askList = askCalls(assistant.content).slice(0, MAX_TOOL_ROUNDS - ran);
+      const toolList = mcpCalls(assistant.content).slice(0, MAX_MCP_ROUNDS - ranMcp);
+      if (!askList.length && !toolList.length) break;
+      if (askList.length || toolList.length) {
+        ran += askList.length;
+        ranMcp += toolList.length;
+        // The round's visible text is protocol fragments around the blocks;
+        // without this it would read as an empty reply.
+        assistant.intermediate = true;
+        await store.putMessage(assistant);
+      }
 
-      for (const call of calls) {
+      for (const call of askList) {
         const run = await executeAskTool(call, controller, convId);   // AbortError escapes
         const toolMsg = store.newMessage(convId, 'tool',
           // The content is what historyForRequest feeds back; an empty answer
@@ -1073,6 +1152,17 @@ async function runCompletion() {
           run.answer || '(The agent returned no text.)', nextSeq(), {
           agent: run.agentName, agentId: run.agentId, prompt: run.prompt,
           threadId: run.threadId,
+        });
+        state.messages.push(toolMsg);
+        if (state.conv?.id === convId) appendMessage(toolMsg);
+        await store.putMessage(toolMsg);
+      }
+      for (const call of toolList) {
+        const run = await executeMcpTool(call, controller);           // AbortError escapes
+        const toolMsg = store.newMessage(convId, 'tool',
+          run.answer || '(The tool returned no content.)', nextSeq(), {
+          mcpServer: run.server, mcpTool: run.tool, mcpArgs: run.prompt,
+          mcpError: run.error,
         });
         state.messages.push(toolMsg);
         if (state.conv?.id === convId) appendMessage(toolMsg);
@@ -1416,7 +1506,7 @@ function agentEditorScreen(agent) {
       el('div', { class: 'item-list' }, [
         el('div', { class: 'item' }, [
           el('label', { class: 'form-check form-switch w-100' }, [
-            el('span', { class: 'form-check-label', text: 'Can ask other agents' }),
+            el('span', { class: 'form-check-label', text: 'Can use tools (agents, MCP)' }),
             toolsSwitch,
           ]),
         ]),
@@ -1934,6 +2024,8 @@ const shell = {
   saveAgents,
   attachDefaultAgent,
   forgetProvider,
+  getMcpServers: () => mcp.list(),
+  saveMcpServers: next => mcp.save(next),
   agentScreens: {
     picker: () => ({ title: 'Agents', render: agentsScreen }),
     editor: agent => agentEditorScreen(agent),
@@ -1951,6 +2043,7 @@ const shell = {
     state.providers = await store.kvGet('providers', state.providers);
     state.agents = await store.kvGet('agents', state.agents);
     state.defaults = { ...DEFAULTS, ...(await store.kvGet('defaults', {})) };
+    await mcp.init();
     await refreshConversations();
     updateChip();
   },

@@ -208,6 +208,31 @@ export function apply(url, headers = {}) {
   return [via, state.token ? { ...headers, 'X-Ivx-Token': state.token } : headers];
 }
 
+/**
+ * The bridge's own route — e.g. `/mcp/stdio` — not a proxied endpoint.
+ *
+ * Returns `[null, headers]` when no bridge is configured, so the caller can
+ * explain why rather than fail with a bare network error. Same gating as
+ * `apply`: on only, and reachable unless the app started it itself.
+ */
+export function self(path, headers = {}) {
+  if (!ready()) return [null, headers];
+  const via = `${state.url}${path}`;
+  return [via, state.token ? { ...headers, 'X-Ivx-Token': state.token } : headers];
+}
+
+/**
+ * Whether this bridge can run local MCP servers (`/mcp/stdio`).
+ *
+ * A built-in bridge ships inside the app, so it is whatever the app speaks;
+ * a bridge someone installed separately has to say so in /health, which also
+ * keeps an old daemon from being sent requests it would only refuse.
+ */
+export function supportsMcp() {
+  if (state.builtIn) return true;
+  return Boolean(state.health?.mcp);
+}
+
 /** One line for a settings row. */
 export function describe() {
   if (!state.enabled) return 'Off — the browser talks to providers directly';

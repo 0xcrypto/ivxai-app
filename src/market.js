@@ -198,17 +198,25 @@ async function installAgent(item) {
 async function installMcp(item) {
   const config = item.config || {};
   if (addons.mcp.some(m => m.storeId === item.id)) { toast('Already installed'); return; }
-  addons.mcp.push({
+  const transport = config.transport || (config.url ? 'http' : 'stdio');
+  const servers = app.getMcpServers();
+  servers.push({
     id: store.uid(), storeId: item.id, name: item.name,
-    transport: config.transport || (config.url ? 'http' : 'stdio'),
+    transport,
     url: config.url || '', command: config.command || '',
     args: Array.isArray(config.args) ? config.args : [],
     env: config.env && typeof config.env === 'object' ? { ...config.env } : {},
+    token: config.token || '',
+    headers: config.headers && typeof config.headers === 'object' ? { ...config.headers } : {},
+    // A local server has no other way to run; a remote one only rides the
+    // bridge when the entry says so.
+    viaBridge: transport === 'stdio' ? true : Boolean(config.viaBridge),
     tools: Array.isArray(config.tools) ? config.tools : [],
+    enabled: true,
     addedAt: Date.now(),
   });
-  await store.kvSet('mcpServers', addons.mcp);
-  toast(`${item.name} added — the app does not call MCP servers yet`, 'ok', 6000);
+  await app.saveMcpServers(servers);
+  toast(`${item.name} added — its tools are offered to agents with tools on`, 'ok', 6000);
 }
 
 async function installSkill(item) {
@@ -257,7 +265,7 @@ async function removeItem(item) {
       }
     } else if (item.kind === 'mcp') {
       addons.mcp = addons.mcp.filter(m => m.storeId !== item.id);
-      await store.kvSet('mcpServers', addons.mcp);
+      await app.saveMcpServers(addons.mcp);
     } else if (item.kind === 'skill') {
       addons.skill = addons.skill.filter(s => s.storeId !== item.id);
       await store.kvSet('skills', addons.skill);

@@ -10,6 +10,7 @@ import * as store from './store.js';
 import * as vault from './vault.js';
 import * as api from './providers.js';
 import * as bridge from './bridge.js';
+import * as mcp from './mcp.js';
 import {
   el, toast, openSheet, pushScreen, popScreen, closeSheet, refreshSheet,
   confirmAction, promptText, chooseFromList, askScreen, downloadJSON, searchBar,
@@ -183,6 +184,12 @@ function rootScreen() {
           ? `${providers.length} configured · ${local} local`
           : 'None yet — add one to start',
         onclick: () => pushScreen({ title: 'Providers', render: providersScreen }),
+      }),
+      navRow('MCP servers', {
+        sub: app.getMcpServers().length
+          ? `${app.getMcpServers().length} configured`
+          : 'None — tools an agent can call',
+        onclick: () => pushScreen({ title: 'MCP servers', render: mcpScreen }),
       }),
       navRow('Sharing', {
         sub: app.getUI().shareBaseUrl
@@ -517,6 +524,243 @@ async function pickModelFor(provider) {
   await app.attachDefaultAgent(provider, previousModel);
   app.refreshChrome();
   refreshSheet();
+}
+
+/* ── MCP servers ───────────────────────────────────────────── */
+
+const MCP_TRANSPORTS = [
+  { value: 'http', label: 'Remote', sub: 'An MCP server on the internet, spoken to with fetch' },
+  { value: 'stdio', label: 'Local (stdio)', sub: 'A program on this machine, started by the bridge' },
+];
+
+function mcpScreen() {
+  const servers = app.getMcpServers();
+
+  return el('div', {}, [
+    group('Configured', servers.length
+      ? servers.map(s => navRow(s.name, {
+          sub: s.transport === 'stdio'
+            ? `Local · ${s.command || 'no command set'}`
+            : (s.url || 'No address set'),
+          dot: s.enabled !== false,
+          tag: s.transport === 'stdio' ? 'local' : null,
+          onclick: () => pushScreen({ title: s.name, render: () => mcpServerScreen(s) }),
+        }))
+      : [actionRow('None yet', {})]),
+
+    group(null, [
+      actionRow('Add a server', { onclick: addMcpServer }),
+    ], 'Each server offers its tools to the model in chats where the agent ' +
+      'has tools on. Local servers run as programs; they are started by the ' +
+      'bridge, so they need it — built into this app, or running separately.'),
+  ]);
+}
+
+async function addMcpServer() {
+  const name = await promptText({
+    title: 'Name it', value: '', placeholder: 'e.g. DeepWiki', okText: 'Next',
+  });
+  if (!name) return;
+  const transport = await chooseFromList({ title: 'Where does it run?', items: MCP_TRANSPORTS });
+  if (!transport) return;
+  const servers = app.getMcpServers();
+  const server = {
+    id: store.uid(), name, transport, enabled: true,
+    viaBridge: transport === 'stdio',
+    addedAt: Date.now(),
+  };
+  servers.push(server);
+  await app.saveMcpServers(servers);
+  pushScreen({ title: name, render: () => mcpServerScreen(server) });
+}
+
+function mcpServerScreen(server) {
+  const save = async () => { await app.saveMcpServers(app.getMcpServers()); };
+
+  const nameInput = el('input', {
+    class: 'form-control', type: 'text', value: server.name, placeholder: 'Name',
+    onchange: async ev => {
+      server.name = ev.target.value.trim() || server.name;
+      ev.target.value = server.name;
+      await save();
+      refreshSheet();
+    },
+  });
+
+  const transportLabel = MCP_TRANSPORTS.find(t => t.value === server.transport)?.label
+    || server.transport;
+  const transportRow = navRow('Transport', {
+    value: transportLabel,
+    onclick: async () => {
+      const next = await chooseFromList({
+        title: 'Transport', items: MCP_TRANSPORTS, selected: server.transport,
+      });
+      if (!next || next === server.transport) return;
+      server.transport = next;
+      // stdio has no other way to run; a remote server only rides the bridge
+      // when asked.
+      if (next === 'stdio') server.viaBridge = true;
+      await save();
+      refreshSheet();
+    },
+  });
+
+  const urlInput = el('input', {
+    class: 'form-control', type: 'url', value: server.url, placeholder: 'https://mcp.example.com/mcp',
+    spellcheck: 'false', autocapitalize: 'off',
+    onchange: async ev => { server.url = ev.target.value.trim(); await save(); },
+  });
+
+  const tokenInput = el('input', {
+    class: 'form-control', type: 'password', autocomplete: 'off', value: server.token,
+    placeholder: 'Bearer token, if the server wants one',
+    onchange: async ev => { server.token = ev.target.value.trim(); await save(); },
+  });
+
+  const headersButton = navRow('Extra headers', {
+    sub: Object.keys(server.headers || {}).length
+      ? `${Object.keys(server.headers).length} set`
+      : 'None',
+    onclick: async () => {
+      const text = await promptText({
+        title: 'Extra headers', multiline: true,
+        value: JSON.stringify(server.headers || {}, null, 2),
+        placeholder: '{ "X-Custom": "value" }',
+      });
+      if (text === null) return;
+      try {
+        const parsed = JSON.parse(text || '{}');
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Not a JSON object');
+        server.headers = parsed;
+        await save();
+        refreshSheet();
+      } catch (err) { toast(`Not valid JSON: ${err.message}`, 'err'); }
+    },
+  });
+
+  const commandInput = el('input', {
+    class: 'form-control', type: 'text', value: server.command, placeholder: 'e.g. npx',
+    spellcheck: 'false', autocapitalize: 'off',
+    onchange: async ev => { server.command = ev.target.value.trim(); await save(); },
+  });
+
+  const argsButton = navRow('Arguments', {
+    sub: server.args?.length ? server.args.join(' ') : 'None',
+    onclick: async () => {
+      const text = await promptText({
+        title: 'Arguments', multiline: true, okText: 'Save',
+        value: (server.args || []).join('\n'),
+        placeholder: 'One argument per line, e.g.\n-y\n@modelcontextprotocol/server-filesystem',
+      });
+      if (text === null) return;
+      server.args = text.split('\n').map(l => l.trim()).filter(Boolean);
+      await save();
+      refreshSheet();
+    },
+  });
+
+  const envButton = navRow('Environment', {
+    sub: Object.keys(server.env || {}).length
+      ? `${Object.keys(server.env).length} variables`
+      : 'None',
+    onclick: async () => {
+      const text = await promptText({
+        title: 'Environment variables', multiline: true,
+        value: JSON.stringify(server.env || {}, null, 2),
+        placeholder: '{ "API_KEY": "…" }',
+      });
+      if (text === null) return;
+      try {
+        const parsed = JSON.parse(text || '{}');
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
+            Object.values(parsed).some(v => typeof v !== 'string')) {
+          throw new Error('Values must be strings');
+        }
+        server.env = parsed;
+        await save();
+        refreshSheet();
+      } catch (err) { toast(`Not valid JSON: ${err.message}`, 'err'); }
+    },
+  });
+
+  const viaBridgeSwitch = switchRow('Route through the CORS bridge', server.viaBridge === true,
+    async checked => {
+      server.viaBridge = checked;
+      await save();
+    });
+
+  const testButton = navRow('Test connection', {
+    sub: 'Connects and lists the tools it offers',
+    onclick: async () => {
+      const busy = toast(`Asking ${server.name}…`);
+      const result = await mcp.test(server);
+      busy.remove();
+      if (result.ok) {
+        toast(result.tools.length
+          ? `${server.name}: ${result.tools.join(', ')}`
+          : `${server.name} connected but offers no tools`, 'ok', 8000);
+      } else {
+        toast(`${server.name}: ${result.error}`, 'err', 9000);
+      }
+    },
+  });
+
+  const isStdio = server.transport === 'stdio';
+
+  return el('div', {}, [
+    group(null, [
+      el('div', { class: 'item' }, [field('Name', nameInput)]),
+      transportRow,
+      switchRow('Enabled', server.enabled !== false, async checked => {
+        server.enabled = checked;
+        await save();
+        refreshSheet();
+      }),
+    ]),
+
+    ...(isStdio ? [
+      group('Local server', [
+        el('div', { class: 'item' }, [field('Command', commandInput)]),
+        argsButton,
+        envButton,
+      ], isStdio && bridge.supportsMcp()
+        ? 'The bridge starts this program on this machine and speaks JSON-RPC to it. '
+          + 'Trust the server before you install it: it runs with your user\'s rights.'
+        : 'A local server needs a bridge that speaks MCP — update the bridge, or set ' +
+          'it up under CORS bypass.'),
+    ] : [
+      group('Remote server', [
+        el('div', { class: 'item' }, [field('URL', urlInput)]),
+        el('div', { class: 'item' }, [field('Bearer token', tokenInput,
+          'Stored in this browser only. Left empty for a server that wants none.')]),
+        headersButton,
+        viaBridgeSwitch,
+      ], 'The URL is the server\'s MCP endpoint. If it refuses browser origins ' +
+        'with a CORS error, the switch above routes it through the bridge instead.'),
+    ]),
+
+    group(null, [testButton]),
+
+    group(null, [
+      actionRow('Remove server', {
+        danger: true,
+        onclick: async () => {
+          const ok = await confirmAction({
+            title: `Remove ${server.name}?`,
+            body: 'Its tools stop being offered to the model. Chats are kept.',
+            okText: 'Remove',
+          });
+          if (!ok) return;
+          const servers = app.getMcpServers();
+          const i = servers.indexOf(server);
+          if (i >= 0) servers.splice(i, 1);
+          await save();
+          popScreen();
+          refreshSheet();
+        },
+      }),
+    ]),
+  ]);
 }
 
 /* ── CORS bypass ───────────────────────────────────────────── */
