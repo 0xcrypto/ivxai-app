@@ -175,6 +175,16 @@ No ads, no trackers, no accounts, no paid tier. If it is useful to you:
 
 - [Sponsor the project](https://github.com/sponsors/0xcrypto)
 - [Star it on GitHub](https://github.com/ivxlabs/chat) — it is how other people find it
+- [Recommend it on AlternativeTo](https://alternativeto.net/software/ivx-ai-chat/about/?utm_source=badge&utm_medium=referral)
+
+<p align="center">
+  <a href="https://alternativeto.net/software/ivx-ai-chat/about/?utm_source=badge&utm_medium=referral" target="_blank">
+    <img src="https://alternativeto.net/static/badges/badge-wide-light.svg"
+         alt="ivx/ai Chat | AlternativeTo"
+         width="284" height="54"
+         style="width: 284px; height: 54px;" />
+  </a>
+</p>
 
 ## Licence
 

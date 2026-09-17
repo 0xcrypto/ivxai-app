@@ -50,6 +50,10 @@ BY DEFAULT it accepts https://ai.ivx.run, https://o.eval.blog, any
 loopback origin, and the Tauri webview origins. Anything else is refused: the
 browser sets Origin and a page cannot forge it, so that list is what stops a
 site you happen to visit from using the bridge to reach your own network.
+
+It also exposes /mcp/stdio, which starts a local MCP server (a program) and
+pipes JSON-RPC to its stdin/stdout on the page's behalf. Access to the bridge
+is therefore access to your machine: keep the token, if you use one, close.
 ";
 
 struct Args {

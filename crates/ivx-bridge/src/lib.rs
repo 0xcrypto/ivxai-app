@@ -26,6 +26,7 @@
 //! ```
 
 pub mod cors;
+mod mcp;
 mod proxy;
 mod ui;
 
@@ -43,8 +44,9 @@ use hyper::{header, HeaderMap, Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
-pub use cors::{OriginPolicy, OriginRule};
+use mcp::McpSessions;
 
+pub use cors::{OriginPolicy, OriginRule};
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 pub type Body = BoxBody<Bytes, BoxError>;
 
@@ -90,6 +92,9 @@ impl Default for Config {
 
 pub struct State {
     pub config: Config,
+    /// Live stdio MCP processes, keyed by session id. Owns the one route that
+    /// can start programs on this machine; see `mcp`.
+    pub mcp: McpSessions,
     client: reqwest::Client,
 }
 
@@ -102,7 +107,11 @@ impl State {
             .danger_accept_invalid_certs(config.insecure)
             .user_agent(format!("ivx-bridge/{VERSION}"))
             .build()?;
-        Ok(Self { config, client })
+        Ok(Self {
+            config,
+            mcp: McpSessions::default(),
+            client,
+        })
     }
 
     fn log(&self, line: &str) {
@@ -199,6 +208,10 @@ async fn route(state: Arc<State>, req: Request<Incoming>) -> Result<Response<Bod
         return Ok(proxy::handle(&state, req, origin).await);
     }
 
+    if path == "/mcp/stdio" {
+        return Ok(mcp::handle(&state, req, origin).await);
+    }
+
     Ok(match state.config.ui_dir.as_deref() {
         Some(dir) => ui::serve(&state, dir, &path, origin).await,
         None => json_error(
@@ -216,13 +229,14 @@ fn health(state: &State, origin: Option<&str>) -> Response<Body> {
     let body = format!(
         concat!(
             r#"{{"ok":true,"name":"ivx-bridge","version":"{}","protocol":{},"#,
-            r#""originAllowed":{},"needsToken":{},"servesUi":{}}}"#
+            r#""originAllowed":{},"needsToken":{},"servesUi":{},"mcp":{}}}"#
         ),
         VERSION,
         PROTOCOL,
         state.config.origins.allows(origin),
         state.config.token.is_some(),
         state.config.ui_dir.is_some(),
+        true,
     );
     let mut res = Response::new(full(body));
     res.headers_mut().insert(
