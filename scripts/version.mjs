@@ -7,8 +7,12 @@
 //   crates/ivx-bridge      the same, and prints it as `ivx-bridge --version`
 //   tauri.conf.json        has no version field, so Tauri falls back to Cargo
 //   package.json           is not read at build time, but should not lie
+//   web/package.json       the chat client, stamped into its About screen
+//   web/src/mcp.js         what it calls itself to an MCP server
 //
-// so this script writes Cargo.toml and mirrors it into package.json.
+// so this script writes Cargo.toml and mirrors it into the other three. The
+// shell and the page it carries ship together, so they are one version: two
+// numbers drifting apart is what the submodule used to arrange.
 //
 //   node scripts/version.mjs 0.2.0     set it
 //   node scripts/version.mjs patch     bump it (also: minor, major)
@@ -23,10 +27,16 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CARGO = join(root, 'Cargo.toml');
 const PKG = join(root, 'package.json');
+const WEB_PKG = join(root, 'web', 'package.json');
+const WEB_MCP = join(root, 'web', 'src', 'mcp.js');
 
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 // The version inside [workspace.package] — never a dependency's version.
 const IN_WORKSPACE = /(\[workspace\.package\][^[]*?\bversion\s*=\s*")([^"]+)(")/s;
+// Rewritten in place rather than through JSON.stringify, to leave key order
+// and formatting exactly as they were.
+const PKG_VERSION = /("version"\s*:\s*")([^"]+)(")/;
+const MCP_VERSION = /(CLIENT_INFO = \{[^}]*\bversion:\s*')([^']+)(')/;
 
 const die = msg => { console.error(`version: ${msg}`); process.exit(1); };
 
@@ -51,6 +61,13 @@ function check(tag) {
   const pkg = readPkg().version;
   const problems = [];
   if (pkg !== version) problems.push(`package.json is ${pkg}, Cargo.toml is ${version}`);
+
+  const webPkg = JSON.parse(readFileSync(WEB_PKG, 'utf8')).version;
+  if (webPkg !== version) problems.push(`web/package.json is ${webPkg}, Cargo.toml is ${version}`);
+  const webMcp = readFileSync(WEB_MCP, 'utf8').match(MCP_VERSION);
+  if (webMcp && webMcp[2] !== version) {
+    problems.push(`web/src/mcp.js says ${webMcp[2]}, Cargo.toml is ${version}`);
+  }
   if (tag) {
     const wanted = tag.replace(/^v/, '');
     if (wanted !== version) problems.push(`tag is ${tag}, Cargo.toml is ${version}`);
@@ -69,12 +86,17 @@ function set(next) {
   const { text, version: current } = readCargo();
   writeFileSync(CARGO, text.replace(IN_WORKSPACE, `$1${next}$3`));
 
-  // Rewritten rather than JSON.stringify'd whole, to leave key order and
-  // formatting exactly as they were.
-  const pkgText = readFileSync(PKG, 'utf8');
-  const pkgVersion = /("version"\s*:\s*")([^"]+)(")/;
-  if (!pkgVersion.test(pkgText)) die('no version field in package.json');
-  writeFileSync(PKG, pkgText.replace(pkgVersion, `$1${next}$3`));
+  for (const file of [PKG, WEB_PKG]) {
+    const pkgText = readFileSync(file, 'utf8');
+    if (!PKG_VERSION.test(pkgText)) die(`no version field in ${file}`);
+    writeFileSync(file, pkgText.replace(PKG_VERSION, `$1${next}$3`));
+  }
+
+  // What the chat client announces to an MCP server on initialize.
+  const mcpText = readFileSync(WEB_MCP, 'utf8');
+  if (MCP_VERSION.test(mcpText)) {
+    writeFileSync(WEB_MCP, mcpText.replace(MCP_VERSION, `$1${next}$3`));
+  }
 
   // Cargo.lock records the workspace crates' versions too.
   try {
@@ -87,8 +109,16 @@ function set(next) {
   console.log('version: commit this, then tag that commit v' + next);
 }
 
-const [arg, tag] = process.argv.slice(2);
+const [arg, tag, ...rest] = process.argv.slice(2);
+if (rest.length) die(`unexpected argument "${rest[0]}"`);
 if (!arg) console.log(readCargo().version);
 else if (arg === '--check') check(tag);
-else if (['major', 'minor', 'patch'].includes(arg)) set(bump(readCargo().version, arg));
-else set(arg);
+else if (['major', 'minor', 'patch'].includes(arg)) {
+  // `bump patch 0.2.2` reads as two conflicting instructions — say so rather
+  // than silently bumping and dropping the version the caller asked for.
+  if (tag) die(`"${arg}" takes no argument — say \`bump ${arg}\` or \`bump ${tag}\`, not both`);
+  set(bump(readCargo().version, arg));
+} else {
+  if (tag) die(`unexpected argument "${tag}"`);
+  set(arg);
+}

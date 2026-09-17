@@ -17,7 +17,6 @@
     "preview": "vite preview",
     "mock": "node tools/mock-provider.mjs",
     "icons": "node tools/make-icons.mjs",
-    "bump": "node scripts/version.mjs",
     "check": "node tools/check-imports.mjs"
   },
   "dependencies": {

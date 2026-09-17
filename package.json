@@ -1,7 +1,7 @@
 {
   "name": "ivxai-app",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "description": "ivx/ai Chat for desktop and mobile, plus the standalone CORS bridge.",
   "license": "GPL-3.0-or-later",
@@ -16,6 +16,8 @@
     "android": "node scripts/android-overlay.mjs && tauri android dev",
     "ios": "tauri ios dev",
     "web:build": "npm --prefix web run build",
+    "web:dev": "npm --prefix web run dev",
+    "web:check": "npm --prefix web run check",
     "bridge": "cargo run --release -p ivx-bridge --",
     "bridge:build": "cargo build --release -p ivx-bridge",
     "test": "cargo test --workspace",
