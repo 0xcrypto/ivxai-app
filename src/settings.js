@@ -11,8 +11,12 @@ import * as vault from './vault.js';
 import * as api from './providers.js';
 import * as bridge from './bridge.js';
 import * as mcp from './mcp.js';
+import * as registry from './registry.js';
+import * as market from './market.js';
+import * as usage from './usage.js';
+import { parseConfig } from './mcp-config.js';
 import {
-  el, toast, openSheet, pushScreen, popScreen, closeSheet, refreshSheet,
+  el, toast, openSheet, pushScreen, popScreen, closeSheet, refreshSheet, entityScreen,
   confirmAction, promptText, chooseFromList, askScreen, downloadJSON, searchBar,
 } from './ui.js';
 
@@ -191,6 +195,10 @@ function rootScreen() {
           : 'None — tools an agent can call',
         onclick: () => pushScreen({ title: 'MCP servers', render: mcpScreen }),
       }),
+      navRow('Store', {
+        sub: storeSourcesLine(),
+        onclick: () => pushScreen({ title: 'Store', render: storeScreen }),
+      }),
       navRow('Sharing', {
         sub: app.getUI().shareBaseUrl
           ? String(app.getUI().shareBaseUrl).trim().replace(/\/+$/, '')
@@ -235,7 +243,7 @@ function providersScreen() {
           sub: p.kind === 'webllm' ? 'Runs in this browser' : (p.baseUrl || 'No address set'),
           dot: Boolean(p.models?.length),
           tag: api.isLocalUrl(p.baseUrl) ? 'local' : null,
-          onclick: () => pushScreen({ title: p.name, render: () => providerScreen(p) }),
+          onclick: () => pushScreen(providerScreen(p.id)),
         }))
       : [actionRow('No providers yet', {})]),
 
@@ -340,10 +348,18 @@ async function addProvider() {
   await app.saveProviders();
   await app.attachDefaultAgent(provider);
   refreshSheet();
-  pushScreen({ title: provider.name, render: () => providerScreen(provider) });
+  pushScreen(providerScreen(provider.id));
 }
 
-function providerScreen(provider) {
+/** The provider editor, bound to an id: see `entityScreen`. */
+const providerScreen = id => entityScreen({
+  find: () => app.getProviders().find(p => p.id === id),
+  title: provider => provider.name,
+  missing: 'This provider was removed.',
+  render: provider => providerBody(provider),
+});
+
+function providerBody(provider) {
   const preset = api.PRESETS.find(p => p.key === provider.preset);
   const { encrypted, unlocked } = vault.status();
   const locked = encrypted && !unlocked;
@@ -526,6 +542,95 @@ async function pickModelFor(provider) {
   refreshSheet();
 }
 
+/* ── the Store's sources ───────────────────────────────────── */
+
+/**
+ * Where the Store gets its entries.
+ *
+ * Both of these decide what this app talks to, which is what Settings is for
+ * — the Store itself is for browsing. There are two, and they are different
+ * in kind: a catalog of JSON entries someone maintains, and the MCP registry,
+ * which is an open index run by the protocol's own project. The registry is a
+ * switch because turning it on is what starts the fetching.
+ */
+function storeScreen() {
+  const on = registry.isOn();
+  const where = registry.host(registry.url());
+  const catalog = market.catalogUrl();
+
+  return el('div', {}, [
+    group('MCP servers', [
+      switchRow(`Use the MCP registry \u00b7 ${where}`, on, async checked => {
+        await registry.setOn(checked);
+        refreshSheet();
+      }),
+      on ? switchRow('Show how much each server is used', usage.isOn(), async checked => {
+        await usage.setOn(checked);
+        refreshSheet();
+      }) : null,
+      on ? navRow('Registry address', {
+        sub: registry.url(),
+        onclick: async () => {
+          const next = await promptText({
+            title: 'Registry address', value: registry.url(), okText: 'Set',
+            placeholder: registry.DEFAULT_URL,
+          });
+          if (next === null) return;
+          await registry.setUrl(next);
+          refreshSheet();
+        },
+      }) : null,
+    ], on
+      ? 'Usage figures come from api.npmjs.org and api.github.com, which learn ' +
+        'which entries you open.'
+      : `Off: the Store lists no MCP servers. Servers you have already installed ` +
+        'keep working either way.'),
+
+    /* The one thing here worth stopping for: the entries are a third party's,
+       not ours. Boxed rather than buried in the note above it. */
+    on ? el('div', { class: 'group' }, [
+      el('div', { class: 'group-note warn', text:
+        `Anyone can publish to ${where}, and nobody reviews it. Installing still asks ` +
+        'first, and shows what it will run here or where your tool calls go.' }),
+    ]) : null,
+
+    group('Catalog', [
+      navRow('Catalog address', {
+        sub: catalog || 'Not set',
+        onclick: async () => {
+          const next = await promptText({
+            title: 'Catalog address', value: catalog, okText: 'Set',
+            placeholder: 'https://raw.githubusercontent.com/you/ai-store/main/',
+          });
+          if (next === null) return;
+          await market.setCatalogUrl(next);
+          refreshSheet();
+        },
+      }),
+    ], 'Providers, agents and skills come from a git-hosted catalog of JSON entries \u2014 ' +
+      'configuration, never code, fetched while the Store is open and cached for a day. ' +
+      'Leave it unset if you do not use one.'),
+  ]);
+}
+
+/** The one-line summary the Settings list shows for the row above. */
+function storeSourcesLine() {
+  const bits = [];
+  bits.push(registry.isOn() ? 'MCP registry on' : 'MCP registry off');
+  if (market.catalogUrl()) bits.push('catalog set');
+  return bits.join(' \u00b7 ');
+}
+
+/**
+ * Opened from the Store as well as from Settings, so the screen that explains
+ * the sources is the same screen either way. Pushed, not opened: Back returns
+ * to wherever the question came up.
+ */
+export function openStoreSettings(shell, onDone) {
+  if (shell) app = shell;
+  pushScreen({ title: 'Store', render: storeScreen, onDismiss: onDone });
+}
+
 /* ── MCP servers ───────────────────────────────────────────── */
 
 const MCP_TRANSPORTS = [
@@ -533,30 +638,136 @@ const MCP_TRANSPORTS = [
   { value: 'stdio', label: 'Local (stdio)', sub: 'A program on this machine, started by the bridge' },
 ];
 
+/* Last known health per server id: `'checking'`, or what mcp.test() answered.
+
+   A configured server that never answers is otherwise indistinguishable from
+   a working one — promptSection() drops it without a word, and the only sign
+   is the model saying it has no tools, which is true and useless. So the list
+   asks each server on the way in and reports what it found. */
+const mcpHealth = new Map();
+
+/** Ask every enabled server whose answer we do not already have. */
+async function probeMcp(servers) {
+  const todo = servers.filter(s => s.enabled !== false && !mcpHealth.has(s.id));
+  if (!todo.length) return;
+  for (const s of todo) mcpHealth.set(s.id, 'checking');
+  refreshSheet();
+  await Promise.all(todo.map(async s => { mcpHealth.set(s.id, await mcp.test(s)); }));
+  refreshSheet();
+}
+
+/** Forget a server's health so the next look re-asks: its settings changed. */
+export function forgetMcpHealth(id) { mcpHealth.delete(id); }
+
+/** What a row says under the server's name. */
+function mcpHealthLine(server) {
+  const where = server.transport === 'stdio'
+    ? `Local · ${server.command || 'no command set'}`
+    : (server.url || 'No address set');
+  if (server.enabled === false) return `Off · ${where}`;
+  const health = mcpHealth.get(server.id);
+  if (!health) return where;
+  if (health === 'checking') return 'Asking it what it offers…';
+  if (!health.ok) return `Not answering · ${health.error}`;
+  if (!health.tools.length) return 'Answers, but offers no tools';
+  return `${health.tools.length} tool${health.tools.length === 1 ? '' : 's'} · ${where}`;
+}
+
 function mcpScreen() {
   const servers = app.getMcpServers();
+  probeMcp(servers);
+
+  // What the model will actually be offered, which is the question the list is
+  // really being asked.
+  const broken = servers.filter(s => {
+    const health = mcpHealth.get(s.id);
+    return s.enabled !== false && health && health !== 'checking' && !health.ok;
+  });
+  const localBroken = broken.filter(s => s.transport === 'stdio');
 
   return el('div', {}, [
     group('Configured', servers.length
       ? servers.map(s => navRow(s.name, {
-          sub: s.transport === 'stdio'
-            ? `Local · ${s.command || 'no command set'}`
-            : (s.url || 'No address set'),
-          dot: s.enabled !== false,
+          sub: mcpHealthLine(s),
+          dot: s.enabled !== false && mcpHealth.get(s.id)?.ok !== false,
           tag: s.transport === 'stdio' ? 'local' : null,
-          onclick: () => pushScreen({ title: s.name, render: () => mcpServerScreen(s) }),
+          onclick: () => pushScreen(mcpServerScreen(s.id)),
         }))
       : [actionRow('None yet', {})]),
 
+    broken.length ? el('div', { class: 'group' }, [
+      el('div', { class: 'group-note warn', text:
+        `${broken.map(s => s.name).join(', ')} ${broken.length === 1 ? 'is' : 'are'} not ` +
+        'answering, so no tools from ' + (broken.length === 1 ? 'it' : 'them') +
+        ' are offered in chats — the model will say it has none.' +
+        (localBroken.length && !bridge.supportsMcp()
+          ? ' Local servers are started by the bridge, and this app has no bridge that ' +
+            'speaks MCP yet — set one up under CORS bypass.'
+          : '') }),
+    ]) : null,
+
     group(null, [
-      actionRow('Add a server', { onclick: addMcpServer }),
+      actionRow('Add a server', {
+        sub: 'Paste a URL, an install command, or a config',
+        onclick: addMcpServer,
+      }),
+      actionRow('Set one up by hand', { onclick: addMcpServerByHand }),
     ], 'Each server offers its tools to the model in chats where the agent ' +
       'has tools on. Local servers run as programs; they are started by the ' +
       'bridge, so they need it — built into this app, or running separately.'),
   ]);
 }
 
+/** The placeholder is the documentation: the three shapes a README hands out,
+    so the field answers "what do I put here" before it is asked. */
+const MCP_PASTE_PLACEHOLDER = `https://mcp.example.com/mcp
+
+npx add-mcp 'https://mcp.example.com/mcp'
+
+{ "mcpServers": { "filesystem": { "command": "npx", "args": ["-y", "…"] } } }`;
+
+/**
+ * Adding by paste.
+ *
+ * A server is almost never described to a person as "a name, then a
+ * transport, then a URL" — it arrives as a line to run or a block of JSON to
+ * drop in a config file. So the field takes that, whichever of them it is,
+ * and the form is what comes after: the servers land on their own screens
+ * with every field already filled in and editable.
+ */
 async function addMcpServer() {
+  const text = await promptText({
+    title: 'Add a server', multiline: true, okText: 'Add',
+    placeholder: MCP_PASTE_PLACEHOLDER,
+  });
+  if (!text) return;
+
+  const existing = app.getMcpServers();
+  const { servers: parsed, error } = parseConfig(text, { taken: existing.map(s => s.name) });
+  if (error) { toast(error, 'err', 9000); return; }
+
+  const saved = await app.saveMcpServers([...existing, ...parsed]);
+  const added = saved.slice(-parsed.length);
+  // A local server is a program on this machine; say so, rather than letting
+  // it look like one more remote address.
+  const local = added.filter(s => s.transport === 'stdio');
+  if (local.length && !bridge.supportsMcp()) {
+    toast(`${local.length === 1 ? local[0].name + ' runs' : 'Some of those run'} on this machine, ` +
+      'and need a bridge that speaks MCP — Settings → CORS bypass.', 'err', 9000);
+  }
+
+  if (added.length === 1) {
+    const [server] = added;
+    toast(`Added ${server.name}${server.transport === 'stdio' ? ' as a local server' : ''}`, 'ok');
+    pushScreen(mcpServerScreen(server.id));
+    return;
+  }
+  toast(`Added ${added.length} servers: ${added.map(s => s.name).join(', ')}`, 'ok', 7000);
+  refreshSheet();
+}
+
+/** The long way round, for a server nobody wrote down anywhere. */
+async function addMcpServerByHand() {
   const name = await promptText({
     title: 'Name it', value: '', placeholder: 'e.g. DeepWiki', okText: 'Next',
   });
@@ -564,18 +775,30 @@ async function addMcpServer() {
   const transport = await chooseFromList({ title: 'Where does it run?', items: MCP_TRANSPORTS });
   if (!transport) return;
   const servers = app.getMcpServers();
-  const server = {
+  servers.push({
     id: store.uid(), name, transport, enabled: true,
     viaBridge: transport === 'stdio',
     addedAt: Date.now(),
-  };
-  servers.push(server);
-  await app.saveMcpServers(servers);
-  pushScreen({ title: name, render: () => mcpServerScreen(server) });
+  });
+  const saved = await app.saveMcpServers(servers);
+  pushScreen(mcpServerScreen(saved.at(-1).id));
 }
 
-function mcpServerScreen(server) {
-  const save = async () => { await app.saveMcpServers(app.getMcpServers()); };
+/** The MCP server editor, bound to an id: see `entityScreen`. */
+const mcpServerScreen = id => entityScreen({
+  find: () => app.getMcpServers().find(s => s.id === id),
+  title: server => server.name,
+  missing: 'This server was removed.',
+  render: server => mcpServerBody(server),
+});
+
+function mcpServerBody(server) {
+  const save = async () => {
+    // Whatever was just edited can change whether it answers at all, so the
+    // list re-asks rather than showing a verdict from the old settings.
+    mcpHealth.delete(server.id);
+    await app.saveMcpServers(app.getMcpServers());
+  };
 
   const nameInput = el('input', {
     class: 'form-control', type: 'text', value: server.name, placeholder: 'Name',
@@ -694,6 +917,7 @@ function mcpServerScreen(server) {
     onclick: async () => {
       const busy = toast(`Asking ${server.name}…`);
       const result = await mcp.test(server);
+      mcpHealth.set(server.id, result);
       busy.remove();
       if (result.ok) {
         toast(result.tools.length
@@ -1141,6 +1365,9 @@ const version = (key, licence) => {
   return v ? `v${v} · ${licence}` : licence;
 };
 
+/* The app's own version, from package.json by the same route. */
+const appVersion = () => (typeof __VERSIONS__ === 'object' && __VERSIONS__.app) || '';
+
 /* The whole point of the project is that nobody pays for it with their
    attention or their data, which leaves exactly one way to fund it. */
 const SPONSOR_URL = 'https://github.com/sponsors/0xcrypto';
@@ -1187,6 +1414,7 @@ function aboutScreen() {
     // Free software: the people running it should be able to find the source
     // and the terms without leaving the app.
     group('This app', [
+      appVersion() ? actionRow('Version', { sub: `v${appVersion()}` }) : null,
       linkRow('Source code', SOURCE_URL, 'github.com/ivxlabs/chat'),
       linkRow('Licence', LICENCE_URL, 'GNU GPL v3 or later'),
     ], 'Free software: you may use, study, share and change it, provided your ' +

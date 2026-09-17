@@ -1,7 +1,7 @@
 {
   "name": "ivx-ai-chat",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "description": "Local-only AI chat client. Keys and conversations stay in the browser.",
   "license": "GPL-3.0-or-later",
@@ -16,7 +16,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "mock": "node tools/mock-provider.mjs",
-    "icons": "node tools/make-icons.mjs"
+    "icons": "node tools/make-icons.mjs",
+    "bump": "node scripts/version.mjs",
+    "check": "node tools/check-imports.mjs"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",

@@ -112,15 +112,21 @@ export class ProviderError extends Error {
   }
 }
 
-function networkHint(provider, err) {
+async function networkHint(provider, err) {
   const local = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/i.test(provider.baseUrl);
   const mixed = location.protocol === 'https:' && provider.baseUrl.startsWith('http:');
   const via = bridge.ready();
 
   // Through the bridge the browser never sees the endpoint, so none of the
   // browser-imposed reasons below apply and repeating them would mislead.
+  //
+  // It also means this failure cannot be about the endpoint at all. A fetch
+  // that throws is a request that got no response, and the only host this
+  // page asked for one is the bridge — so the bridge is what has to explain
+  // itself. (When the bridge did reach the endpoint and the endpoint failed,
+  // it answers with a status and a reason, and that is read elsewhere.)
   if (via) {
-    return `The bridge could not reach ${provider.baseUrl}. ${err?.message || ''}`.trim();
+    return bridge.explainUnreachable();
   }
   // Everything past here is the browser refusing, not the endpoint failing —
   // so the bridge is the fix, and it is worth saying so every time.
@@ -327,7 +333,7 @@ export async function listModels(provider, apiKey, signal) {
     res = await fetch(endpoint, { method: 'GET', headers, signal });
   } catch (err) {
     if (err.name === 'AbortError') throw err;
-    throw new ProviderError(networkHint(provider, err), { cause: err });
+    throw new ProviderError(await networkHint(provider, err), { cause: err });
   }
   if (!res.ok) throw await readError(res);
   const json = await res.json();
@@ -408,7 +414,7 @@ export async function streamChat({ provider, apiKey, model, system, messages, te
     });
   } catch (err) {
     if (err.name === 'AbortError') throw err;
-    throw new ProviderError(networkHint(provider, err), { cause: err });
+    throw new ProviderError(await networkHint(provider, err), { cause: err });
   }
   if (!res.ok) throw await readError(res);
   if (!res.body) throw new ProviderError('Provider returned no response body');

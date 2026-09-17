@@ -233,6 +233,44 @@ export function supportsMcp() {
   return Boolean(state.health?.mcp);
 }
 
+/**
+ * Why a call that went through the bridge never came back.
+ *
+ * A thrown fetch on the bridge path is not a fact about the provider: the
+ * browser never contacted the provider, the bridge was going to. Blaming the
+ * endpoint in that case sends people to restart a server that was never asked
+ * anything. So this re-probes — /health answers every origin, including ones
+ * /proxy refuses — and reports which hop actually broke.
+ *
+ * Never throws; it is called from an error path.
+ */
+export async function explainUnreachable() {
+  const where = state.builtIn ? 'the bridge built into this app' : `the bridge at ${state.url}`;
+  const Where = where[0].toUpperCase() + where.slice(1);
+  await verify();
+
+  if (state.health?.ok) {
+    if (!state.health.originAllowed) {
+      return `${Where} is running, but it does not accept requests from ${location.origin}. ` +
+        `Restart it with --allow-origin ${location.origin}.`;
+    }
+    // It answered a moment later, so it is up and willing: the request itself
+    // was cut off rather than refused.
+    return `The request through ${where} was cut off, though it is running and ` +
+      'answering now. It may have been restarted mid-request, or the endpoint ' +
+      'behind it closed the connection. Worth trying again.';
+  }
+
+  if (location.protocol === 'https:' && state.url.startsWith('http:')) {
+    return `${Where} did not answer. Either it is not running, or this browser is ` +
+      'refusing to let an HTTPS page reach a plain-HTTP address on this machine — ' +
+      'Safari does that, where Chrome and Firefox do not. The desktop app carries ' +
+      'its own bridge; a standalone one can serve the app itself with --ui-dir, ' +
+      'which puts both on the same origin.';
+  }
+  return `${Where} did not answer. Is it still running?`;
+}
+
 /** One line for a settings row. */
 export function describe() {
   if (!state.enabled) return 'Off — the browser talks to providers directly';

@@ -25,13 +25,18 @@ import * as vault from './vault.js';
 import * as api from './providers.js';
 import * as bridge from './bridge.js';
 import * as mcp from './mcp.js';
+import * as registry from './registry.js';
+import * as usage from './usage.js';
 import * as share from './share.js';
 import { renderMarkdown } from './markdown.js';
 import { loadHighlighter, repaintCodeBlocks } from './highlight.js';
-import { openSettings, openProviders, openIntro, openDisclaimer, chooseModel, setShell } from './settings.js';
-import { openMarket } from './market.js';
 import {
-  $, el, clear, toast, actionSnack, initSheet, openSheet, pushScreen, closeSheet, refreshSheet,
+  openSettings, openProviders, openStoreSettings, openIntro, openDisclaimer, chooseModel, setShell,
+} from './settings.js';
+import { openMarket, initStore } from './market.js';
+import {
+  $, el, clear, toast, actionSnack, initSheet, openSheet, pushScreen, popScreen, closeSheet,
+  refreshSheet, setSheetTitle, entityScreen,
   confirmAction, promptText, copyText, downloadJSON, downloadBlob, groupLabel, autosize,
   chooseFromList,
 } from './ui.js';
@@ -91,6 +96,9 @@ async function boot() {
   state.providers = await store.kvGet('providers', []);
   state.defaults = { ...DEFAULTS, ...(await store.kvGet('defaults', {})) };
   await mcp.init();
+  await registry.init();
+  await usage.init();
+  await initStore();
 
   if (!state.providers.length) {
     // WebLLM leads — the model runs in this very browser, with no server, no
@@ -110,6 +118,9 @@ async function boot() {
     state.agents = state.providers.map(newAgentFor);
     await saveAgents();
   }
+  // Servers are loaded by now, so agents can be brought in step with them
+  // before the first chat asks what tools it has.
+  await syncAgentsWithMcp();
 
   // A preset's default model can change between versions (WebLLM moved to
   // Gemma 2 2B); agents still only following the provider default move with
@@ -297,6 +308,52 @@ const newAgentFor = provider => ({
   historyLimit: state.defaults.historyLimit,
 });
 
+/**
+ * Keep every agent's tool access in step with the servers that actually exist.
+ *
+ * An agent does not own a copy of the server list — it has a model, and it has
+ * whatever tools are installed right now. All it stores is the servers it has
+ * been switched off for, so installing one reaches every agent that has not
+ * refused it, and removing one leaves nothing behind.
+ *
+ * Two things are settled here, both idempotent:
+ *
+ *   - `allowedMcp`, from when agents did hold a frozen list, is dropped rather
+ *     than translated. That list cannot tell "I switched this server off" apart
+ *     from "this server did not exist when I last touched the switches" — it
+ *     was written from whatever happened to be installed at the time — and
+ *     reading it as refusal is what silently cut agents off from servers
+ *     installed later. Access is the safe reading of an ambiguous record here:
+ *     the switches are still there for anyone who did mean to refuse.
+ *   - A refusal naming a server that no longer exists is dropped; ids are
+ *     unique, so it can only ever be dead weight.
+ */
+async function syncAgentsWithMcp() {
+  const live = new Set(mcp.list().map(s => s.id));
+  let changed = false;
+
+  for (const agent of state.agents) {
+    const denied = new Set(agent.deniedMcp || []);
+    const before = denied.size;
+    let touched = false;
+
+    if (Array.isArray(agent.allowedMcp)) {
+      delete agent.allowedMcp;
+      touched = true;
+    }
+
+    for (const id of [...denied]) if (!live.has(id)) denied.delete(id);
+
+    if (touched || denied.size !== before) {
+      if (denied.size) agent.deniedMcp = [...denied];
+      else delete agent.deniedMcp;
+      changed = true;
+    }
+  }
+
+  if (changed) await saveAgents();
+}
+
 /** A chat leaving an agent (agent deleted, provider removed) does not lose
     its footing: it takes a snapshot of the agent's settings and continues
     with those instead. */
@@ -451,8 +508,8 @@ async function executeAskTool(call, controller, parentConvId) {
 
 /** Run one MCP tool call, and return what it came back with — or a failure
     the model can read and react to, the way a failed tool should. */
-async function executeMcpTool(call, controller) {
-  const resolved = mcp.resolveToolCall(call);
+async function executeMcpTool(call, controller, denied) {
+  const resolved = mcp.resolveToolCall(call, denied);
   if (!resolved) {
     return { server: '', tool: call.name || '', prompt: '',
       answer: `No tool answers to “${call.name}”. Check the exact names in the tool list.` };
@@ -871,10 +928,7 @@ function paintBody(body, msg) {
     return;
   }
 
-  // Ask blocks and tool calls are protocol, not prose; what the model
-  // actually said is everything around them.
-  const visible = splitAskBlocks(msg.content)
-    .filter(s => !s.ask && !s.toolCall).map(s => s.text).join('\n\n').trim();
+  const visible = visibleText(msg.content);
   const holder = el('div', { html: renderMarkdown(visible) });
   body.append(holder);
 
@@ -884,13 +938,42 @@ function paintBody(body, msg) {
     holder.append(msg.status
       ? el('p', { class: 'msg-note', text: msg.status })
       : el('span', { class: 'caret' }));
-  } else if (!visible && !msg.reasoning && !msg.intermediate) {
-    // A reply that finished without a word shows as still thinking, not as
-    // an error line.
-    holder.append(el('span', { class: 'thinking' }, [
-      el('span'), el('span'), el('span'),
-    ]));
   }
+}
+
+/** What the model actually said. Ask blocks and tool calls are protocol, not
+    prose, so they are not part of it. */
+const visibleText = content => splitAskBlocks(content)
+  .filter(s => !s.ask && !s.toolCall)
+  .map(s => s.text)
+  .join('\n\n')
+  .trim();
+
+/**
+ * Whether a message has anything to put on screen.
+ *
+ * A turn can end with nothing to show: a model that answered with silence, or
+ * an assistant turn whose entire content was a tool call the round already
+ * acted on. That used to render as a bubble with three pulsing dots, which
+ * says "still coming" about something that has already finished — so it waited
+ * forever, and the copy button underneath copied an empty string. Nothing to
+ * show means nothing is shown.
+ */
+function worthShowing(msg) {
+  if (!msg) return false;
+  if (msg.pending || msg.error || msg.reasoning) return true;
+  if (msg.role === 'tool') return true;              // the card is the content
+  if (msg.role === 'user') return Boolean(String(msg.content || '').trim());
+  return Boolean(visibleText(msg.content));
+}
+
+/** Put a message's node in step with the message: gone, if it turned out to
+    have nothing to say. */
+function replaceMessageNode(msg) {
+  const node = nodeFor(msg.id);
+  if (!node) return;
+  if (worthShowing(msg)) node.replaceWith(messageNode(msg));
+  else node.remove();
 }
 
 function footNode(msg) {
@@ -947,7 +1030,8 @@ function renderMessages(jump = false) {
   const scroller = clear(dom.messages);
   if (state.shared) {
     // Read-only transcript: same message styling, no actions, no composer.
-    scroller.append(el('div', { class: 'thread' }, state.shared.messages.map(previewNode)));
+    scroller.append(el('div', { class: 'thread' },
+      state.shared.messages.filter(worthShowing).map(previewNode)));
     if (jump || state.pinned) scrollToBottom();
     return;
   }
@@ -957,12 +1041,15 @@ function renderMessages(jump = false) {
     return;
   }
   const thread = el('div', { class: 'thread' });
-  for (const msg of state.messages) thread.append(messageNode(msg));
+  for (const msg of state.messages) {
+    if (worthShowing(msg)) thread.append(messageNode(msg));
+  }
   scroller.append(thread);
   if (jump || state.pinned) scrollToBottom();
 }
 
 function appendMessage(msg) {
+  if (!worthShowing(msg)) return;
   let thread = $('.thread', dom.messages);
   if (!thread) {
     thread = el('div', { class: 'thread' });
@@ -1059,7 +1146,11 @@ async function runCompletion() {
 
   // MCP tools are offered when configured servers answer; the catalog is
   // cached, so this is usually a no-op and costs nothing to check.
-  const toolSection = agent?.tools === false ? '' : await mcp.promptSection();
+  // An agent is offered whatever is installed now, minus the servers it has
+  // been switched off for. Nothing is remembered about servers that did not
+  // exist yet, so installing one reaches every agent that has not refused it.
+  const mcpDenied = agent?.deniedMcp?.length ? new Set(agent.deniedMcp) : null;
+  const toolSection = agent?.tools === false ? '' : await mcp.promptSection(mcpDenied);
 
   // One assistant message per round. Tool answers arrive between rounds as
   // tool messages; the next round sees them through historyForRequest. The
@@ -1124,7 +1215,7 @@ async function runCompletion() {
       await store.putMessage(assistant);
       current = null;
       if (state.conv?.id === convId) {
-        nodeFor(assistant.id)?.replaceWith(messageNode(assistant));
+        replaceMessageNode(assistant);
         if (state.pinned) scrollToBottom();
       }
 
@@ -1158,7 +1249,7 @@ async function runCompletion() {
         await store.putMessage(toolMsg);
       }
       for (const call of toolList) {
-        const run = await executeMcpTool(call, controller);           // AbortError escapes
+        const run = await executeMcpTool(call, controller, mcpDenied);  // AbortError escapes
         const toolMsg = store.newMessage(convId, 'tool',
           run.answer || '(The tool returned no content.)', nextSeq(), {
           mcpServer: run.server, mcpTool: run.tool, mcpArgs: run.prompt,
@@ -1182,7 +1273,7 @@ async function runCompletion() {
       delete assistant.status;
       await store.putMessage(assistant);
       if (state.conv?.id === convId) {
-        nodeFor(assistant.id)?.replaceWith(messageNode(assistant));
+        replaceMessageNode(assistant);
         if (state.pinned) scrollToBottom();
       }
     }
@@ -1290,7 +1381,7 @@ function agentsScreen() {
       // editor instead of pointing a chat at a dead end.
       onclick: () => agent.model
         ? useAgent(agent)
-        : pushScreen(agentEditorScreen(agent)),
+        : pushScreen(agentEditorScreen(agent.id)),
     }, [
       el('span', { class: 'item-main' }, [
         el('span', { class: 'item-title', text: agent.name }),
@@ -1338,8 +1429,7 @@ async function editAgentPrompt() {
     selected: agentOf(state.conv)?.id,
   });
   if (!id) return;
-  const agent = agentById(id);
-  if (agent) pushScreen(agentEditorScreen(agent));
+  if (agentById(id)) pushScreen(agentEditorScreen(id));
 }
 
 /** Point the current chat at an agent. The chat's own provider/model fields
@@ -1361,8 +1451,13 @@ async function useAgent(agent) {
    there silently undid every pick the user had made, which is why an edited
    model could be saved as if it had never been chosen. The draft is therefore
    created once, when the screen is pushed, and lives on the returned object. */
-function agentEditorScreen(agent) {
-  const isNew = !agent;
+function agentEditorScreen(agentId) {
+  // Looked up, never held: the object this was opened with can be replaced by
+  // an import or a reload, and an editor writing into the old one saves
+  // nothing at all. See `entityScreen` in ui.js.
+  const live = () => (agentId ? agentById(agentId) : null);
+  const agent = live();
+  const isNew = !agentId;
   const draft = agent ? { ...agent } : {
     id: null, name: '', providerId: null, model: '',
     systemPrompt: state.defaults.systemPrompt || '',
@@ -1378,9 +1473,29 @@ function agentEditorScreen(agent) {
     draft.tools = false;
   }
 
+  /* An existing agent commits each edit as it is made, the way the provider and
+     MCP editors do: Back means "done", not "discard", and a model chosen and
+     then backed out of was being thrown away. A new agent has no record to
+     write into until Create makes one, so there the draft is all there is.
+     Silent — a toast per keystroke-ending change would be noise, and the row
+     already shows the new value. */
+  const commit = async () => {
+    if (isNew) return;
+    const target = live();
+    if (!target) return;             // deleted under us; entityScreen says so
+    Object.assign(target, draft);
+    await saveAgents();
+    updateChip();
+  };
+
   const nameInput = el('input', {
     class: 'form-control', type: 'text', value: draft.name, placeholder: 'Name',
-    onchange: ev => { draft.name = ev.target.value.trim(); },
+    onchange: async ev => {
+      draft.name = ev.target.value.trim() || draft.name;
+      ev.target.value = draft.name;
+      await commit();
+      setSheetTitle(isNew ? 'New agent' : draft.name);
+    },
   });
 
   // Value labels live outside render() and are updated imperatively: the
@@ -1405,6 +1520,7 @@ function agentEditorScreen(agent) {
       if (providerById(id)?.kind === 'webllm') { draft.tools = false; toolsSwitch.checked = false; }
       providerValue.textContent = providerById(id)?.name || 'None';
       modelValue.textContent = draft.model || 'Not set';
+      await commit();
     },
   }, [
     el('span', { class: 'item-main' }, [el('span', { class: 'item-title', text: 'Provider' })]),
@@ -1423,6 +1539,7 @@ function agentEditorScreen(agent) {
       // Picked by hand: no longer inherited from the provider's default.
       draft.modelFromProvider = false;
       modelValue.textContent = model;
+      await commit();
     },
   }, [
     el('span', { class: 'item-main' }, [el('span', { class: 'item-title', text: 'Model' })]),
@@ -1433,7 +1550,7 @@ function agentEditorScreen(agent) {
   const sys = el('textarea', {
     class: 'form-control', rows: 5, value: draft.systemPrompt || '',
     placeholder: 'You are a helpful assistant.',
-    onchange: ev => { draft.systemPrompt = ev.target.value; },
+    onchange: async ev => { draft.systemPrompt = ev.target.value; await commit(); },
   });
 
   const temp = el('input', {
@@ -1442,33 +1559,39 @@ function agentEditorScreen(agent) {
   });
   const tempValue = el('span', { class: 'item-value', text: Number(draft.temperature ?? 0.7).toFixed(2) });
   temp.addEventListener('input', () => { tempValue.textContent = Number(temp.value).toFixed(2); });
-  temp.addEventListener('change', () => { draft.temperature = Number(temp.value); });
+  temp.addEventListener('change', async () => {
+    draft.temperature = Number(temp.value);
+    await commit();
+  });
 
   const maxTokensInput = el('input', {
     class: 'form-control', type: 'number', min: 1, step: 1,
     value: draft.maxTokens ?? '', placeholder: 'Provider default',
-    onchange: ev => { draft.maxTokens = ev.target.value ? Number(ev.target.value) : null; },
+    onchange: async ev => {
+      draft.maxTokens = ev.target.value ? Number(ev.target.value) : null;
+      await commit();
+    },
   });
 
   const toolsSwitch = el('input', {
     class: 'form-check-input', type: 'checkbox',
     checked: draft.tools !== false,
-    onchange: ev => { draft.tools = ev.target.checked; },
+    onchange: async ev => {
+      draft.tools = ev.target.checked;
+      await commit();
+      refreshSheet();       // the MCP note below says whether these count
+    },
   });
 
-  const save = async () => {
+  const create = async () => {
     draft.name = draft.name || providerById(draft.providerId)?.name || 'Agent';
     if (!draft.providerId) { toast('Pick a provider', 'err'); return; }
     if (!draft.model) { toast('Pick a model', 'err'); return; }
-    if (isNew) {
-      const created = { ...draft, id: store.uid() };
-      state.agents.push(created);
-      saveUI({ lastAgentId: created.id });
-    } else {
-      Object.assign(agent, draft);
-    }
+    const created = { ...draft, id: store.uid() };
+    state.agents.push(created);
+    saveUI({ lastAgentId: created.id });
     await saveAgents();
-    toast(isNew ? 'Agent created' : 'Agent saved', 'ok');
+    toast('Agent created', 'ok');
     updateChip();
     popScreen();
   };
@@ -1512,24 +1635,57 @@ function agentEditorScreen(agent) {
         ]),
       ]),
     ], 'Lets the model delegate a question to another agent as its own thread.'),
-    el('div', { class: 'sheet-actions' }, [
+    mcp.list().length ? el('div', { class: 'group' }, [
+      el('div', { class: 'item-list' }, mcp.list().map(server => {
+        const serverSwitch = el('input', {
+          class: 'form-check-input', type: 'checkbox',
+          checked: !draft.deniedMcp?.includes(server.id),
+          onchange: async ev => {
+            // Only the refusals are kept. An agent says nothing about a server
+            // it has never been shown, which is what lets one installed later
+            // reach it.
+            const denied = new Set(draft.deniedMcp || []);
+            if (ev.target.checked) denied.delete(server.id);
+            else denied.add(server.id);
+            draft.deniedMcp = [...denied];
+            await commit();
+          },
+        });
+        return el('div', { class: 'item' }, [
+          el('label', { class: 'form-check form-switch w-100' }, [
+            el('span', { class: 'item-main' }, [
+              el('span', { class: 'item-title', text: server.name }),
+              server.enabled === false ? el('span', { class: 'item-sub', text: 'Disabled in MCP settings' }) : null,
+            ]),
+            serverSwitch,
+          ]),
+        ]);
+      })),
+    ], draft.tools === false
+      ? 'Tools are off for this agent, so none of these are offered — the model ' +
+        'will say it has no MCP servers.'
+      : 'Which MCP servers this agent may call. A server you install later is ' +
+        'on for every agent that has not switched it off here.') : null,
+    isNew ? el('div', { class: 'sheet-actions' }, [
       el('button', { class: 'btn btn-primary btn-block', type: 'button',
-                    text: isNew ? 'Create agent' : 'Save agent', onclick: save }),
-    ]),
-    isNew ? null : el('div', { class: 'group' }, [
+                    text: 'Create agent', onclick: create }),
+    ]) : el('div', { class: 'group' }, [
       el('div', { class: 'item-list' }, [
         el('button', { class: 'item danger', type: 'button',
-                      onclick: () => deleteAgentFlow(agent) }, [
+                      onclick: () => deleteAgentFlow(live() || agent) }, [
           el('span', { class: 'item-main' }, [el('span', { class: 'item-title', text: 'Delete agent' })]),
         ]),
       ]),
     ]),
   ]);
 
-  return {
-    title: isNew ? 'New agent' : agent.name,
-    render,
-  };
+  if (isNew) return { title: 'New agent', render };
+  return entityScreen({
+    find: live,
+    title: a => a.name,
+    missing: 'This agent was removed.',
+    render: () => render(),
+  });
 }
 
 async function deleteAgentFlow(agent) {
@@ -2015,6 +2171,19 @@ async function askUnlock() {
   }
 }
 
+/** Bring a list up to date without discarding the objects in it: anything that
+    survived keeps its identity, so references held elsewhere stay real. */
+function mergeById(list, incoming) {
+  const existing = new Map(list.map(item => [item.id, item]));
+  const next = (Array.isArray(incoming) ? incoming : []).map(fresh => {
+    const live = existing.get(fresh?.id);
+    return live ? Object.assign(live, fresh) : fresh;
+  });
+  list.length = 0;
+  list.push(...next);
+  return list;
+}
+
 /* ── what settings.js calls back into ──────────────────────── */
 
 const shell = {
@@ -2025,7 +2194,14 @@ const shell = {
   attachDefaultAgent,
   forgetProvider,
   getMcpServers: () => mcp.list(),
-  saveMcpServers: next => mcp.save(next),
+  saveMcpServers: async next => {
+    const saved = await mcp.save(next);
+    await syncAgentsWithMcp();     // a removed server leaves no trace on agents
+    return saved;
+  },
+  // The Store's own settings — its catalog address and the MCP registry —
+  // live in Settings; this is how the Store screen reaches them.
+  openStoreSettings: onDone => openStoreSettings(shell, onDone),
   agentScreens: {
     picker: () => ({ title: 'Agents', render: agentsScreen }),
     editor: agent => agentEditorScreen(agent),
@@ -2040,10 +2216,14 @@ const shell = {
     if (!state.messages.length) renderMessages();
   },
   reloadData: async () => {
-    state.providers = await store.kvGet('providers', state.providers);
-    state.agents = await store.kvGet('agents', state.agents);
+    // Merged into the arrays rather than swapped for new ones: an editor open
+    // on a provider or an agent is holding the live object, and replacing it
+    // would leave that screen writing into a copy nobody stores.
+    mergeById(state.providers, await store.kvGet('providers', state.providers));
+    mergeById(state.agents, await store.kvGet('agents', state.agents));
     state.defaults = { ...DEFAULTS, ...(await store.kvGet('defaults', {})) };
     await mcp.init();
+    await syncAgentsWithMcp();     // imported agents may carry the old shape
     await refreshConversations();
     updateChip();
   },

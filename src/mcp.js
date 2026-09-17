@@ -29,7 +29,7 @@ const KV_KEY = 'mcpServers';
     version, which the spec says to accept, so older servers still pair. */
 const PROTOCOL_VERSION = '2025-06-18';
 
-const CLIENT_INFO = { name: 'ivx-ai-chat', version: '0.2.1' };
+const CLIENT_INFO = { name: 'ivx-ai-chat', version: '0.2.2' };
 
 /** tools/list answers are held this long before being asked for again. */
 const TOOLS_TTL_MS = 5 * 60 * 1000;
@@ -46,6 +46,9 @@ const sessions = new Map();   // server id -> { http: '...' | null, stdio: '...'
 /** tools/list results per server id: { tools, error, fetchedAt }. */
 const catalog = new Map();
 
+/** Server id -> the JSON last persisted for it. See save(). */
+const written = new Map();
+
 let rpcSeq = 0;
 const nextId = () => ++rpcSeq;
 
@@ -56,8 +59,8 @@ class StaleSession extends McpError {}
 /* ── the installed servers ─────────────────────────────────── */
 
 export async function init() {
-  servers = (await store.kvGet(KV_KEY, []))
-    .map(s => normalize(s));
+  servers = (await store.kvGet(KV_KEY, [])).map(s => Object.assign(s, normalize(s)));
+  remember();
   return servers;
 }
 
@@ -88,24 +91,35 @@ export function list() { return servers; }
 export function byId(id) { return servers.find(s => s.id === id) || null; }
 
 export async function save(next) {
-  const nextList = (next ?? servers).map(normalize);
+  // Filled in on the object it was given rather than on a copy of it: the
+  // settings screen holds on to a server across its edits, and a screen
+  // editing a copy that was quietly left behind saves nothing.
+  const nextList = (next ?? servers).map(s => Object.assign(s, normalize(s)));
   // Only a changed (or removed) server has to lose its cached tools and its
   // live session — a save that touched nothing else should not leave a stdio
-  // process orphaned on the bridge until the reaper finds it.
-  const before = new Map(servers.map(s => [s.id, JSON.stringify(s)]));
-  const keep = new Set(nextList.map(s => s.id));
-  for (const [id, json] of before) {
-    const fresh = nextList.find(s => s.id === id);
-    if (fresh && JSON.stringify(fresh) === json) continue;
-    catalog.delete(id);
-    sessions.delete(id);
+  // process orphaned on the bridge until the reaper finds it. The comparison
+  // is against what was last written, because by now the live object already
+  // carries the change.
+  const keep = new Set();
+  for (const server of nextList) {
+    keep.add(server.id);
+    const json = JSON.stringify(server);
+    if (written.get(server.id) !== json) invalidate(server.id);
+    written.set(server.id, json);
   }
-  for (const id of catalog.keys()) {   // cache entries for removed servers
-    if (!keep.has(id)) { catalog.delete(id); sessions.delete(id); }
+  for (const id of [...written.keys()]) {   // servers that were removed
+    if (!keep.has(id)) { written.delete(id); invalidate(id); }
   }
   servers = nextList;
   await store.kvSet(KV_KEY, servers);
   return servers;
+}
+
+/** What each server looked like when it was last written, so an edit can be
+    told from a save that changed nothing. */
+function remember() {
+  written.clear();
+  for (const server of servers) written.set(server.id, JSON.stringify(server));
 }
 
 export function invalidate(id) {
@@ -369,8 +383,8 @@ function argSummary(schema) {
 
 /** The tools the model is offered: the system-prompt section, or ''.
     A server that errors is left out here; its error is settings' business. */
-export async function promptSection() {
-  const usable = servers.filter(s => s.enabled !== false);
+export async function promptSection(denied) {
+  const usable = servers.filter(s => s.enabled !== false && !denied?.has(s.id));
   if (!usable.length) return '';
   const lines = [];
   for (const server of usable) {
@@ -395,11 +409,11 @@ export async function promptSection() {
 
 /** Parse one `<tool>` block: the server it names (matched by its configured
     name, longest prefix first) or null when no server answers to it. */
-export function resolveToolCall(call) {
+export function resolveToolCall(call, denied) {
   const wanted = String(call.name || '').trim();
   if (!wanted.includes('/')) return null;
   const hit = servers
-    .filter(s => s.enabled !== false && wanted.startsWith(`${s.name}/`))
+    .filter(s => s.enabled !== false && !denied?.has(s.id) && wanted.startsWith(`${s.name}/`))
     .sort((a, b) => b.name.length - a.name.length)[0] || null;
   if (!hit) return null;
   const tool = wanted.slice(hit.name.length + 1);

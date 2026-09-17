@@ -16,8 +16,10 @@
 
 import * as store from './store.js';
 import * as vault from './vault.js';
+import * as registry from './registry.js';
+import * as usage from './usage.js';
 import {
-  el, toast, openSheet, pushScreen, refreshSheet, confirmAction, promptText,
+  el, clear, toast, openSheet, pushScreen, refreshSheet, confirmAction, promptText,
 } from './ui.js';
 
 /* Where the catalog lives — a directory URL ending before index.json, or an
@@ -47,7 +49,29 @@ let stale = false;         // true when showing a cache older than CACHE_MS
 let loadPending = false;
 let filter = 'all';
 let query = '';
-let addons = { mcp: [], skill: [] };       // installed MCP servers and skills
+let addons = { skill: [] };                // installed skills; MCP servers are asked of the app
+
+/* The MCP registry is a second source, off until it is asked for: it is a
+   third party, and turning it on is what starts talking to it. */
+let registryOn = false;
+let registryUrl = registry.DEFAULT_URL;
+let registryItems = [];
+let registryError = '';
+let registryPending = false;
+
+/** Read once at boot so Settings can show the address without awaiting. */
+export async function initStore() {
+  source = String(await store.kvGet(URL_KEY, DEFAULT_STORE_URL) || '').trim();
+  return source;
+}
+
+/** The catalog address. Settings owns the screen for it; this owns the value. */
+export const catalogUrl = () => source;
+
+export async function setCatalogUrl(next) {
+  source = String(next || '').trim();
+  await store.kvSet(URL_KEY, source);
+}
 
 export function openMarket(shell) {
   app = shell;
@@ -56,7 +80,8 @@ export function openMarket(shell) {
   // The very first open has nothing to show yet, so the loading note has to
   // be up before the first paint — load() only sets it after its first await.
   loadPending = items === null;
-  openSheet({ title: 'Store', render: marketScreen });
+  // A place you go, not a tray over the chat: the Store is a page.
+  openSheet({ title: 'Store', render: marketScreen, page: true });
   load(false).then(refreshSheet);
 }
 
@@ -67,11 +92,13 @@ async function load(force) {
   source = url;
   loadError = '';
   stale = false;
-  addons = {
-    mcp: await store.kvGet('mcpServers', []),
-    skill: await store.kvGet('skills', []),
-  };
-  if (!url) { items = null; loadPending = false; return; }
+  addons = { skill: await store.kvGet('skills', []) };
+  registryOn = registry.isOn();
+  registryUrl = registry.url();
+  if (!registryOn) { registryItems = []; registryError = ''; }
+  if (!url) { items = null; loadPending = false; if (registryOn) await loadRegistry(); return; }
+
+  if (registryOn) await loadRegistry();
 
   const cache = await store.kvGet(CACHE_KEY, null);
   if (!force && cache && cache.url === url && Array.isArray(cache.items) &&
@@ -105,6 +132,34 @@ async function load(force) {
     }
   }
   loadPending = false;
+}
+
+/** Ask the registry for what matches the current search. Its failures are
+    kept apart from the catalog's: one source being down is not the other
+    source being empty. */
+async function loadRegistry() {
+  if (!registryOn) { registryItems = []; return; }
+  registryPending = true;
+  try {
+    registryItems = await registry.search(query);
+    registryError = '';
+  } catch (err) {
+    registryItems = [];
+    registryError = err.message || String(err);
+  } finally {
+    registryPending = false;
+  }
+  // Counted after the list is in hand, and awaited: an entry that arrives
+  // without its number and grows one a second later is harder to read than one
+  // that arrives complete.
+  try { await usage.fetchDownloads(registryItems); } catch { /* numbers are optional */ }
+}
+
+/** Where the Store's sources are configured: in Settings, with everything
+    else that decides what this app talks to. Pushed onto this sheet, so Back
+    comes straight back to the Store, and what changed is reloaded on the way. */
+function openSources() {
+  app.openStoreSettings?.(() => { load(true).then(refreshSheet); });
 }
 
 /* ── install / remove ──────────────────────────────────────── */
@@ -195,13 +250,64 @@ async function installAgent(item) {
   toast(`${item.name} added to agents`, 'ok');
 }
 
+/** stdio or not: everything else — `http`, `sse`, nothing at all — is a
+    remote server as far as this app is concerned. */
+const mcpTransport = config =>
+  (config.transport === 'stdio' || (!config.url && config.command) ? 'stdio' : 'http');
+
+const hostOf = url => { try { return new URL(url).host; } catch { return String(url || 'that server'); } };
+
+/**
+ * What installing an MCP server actually costs, in the words of the thing it
+ * costs it in.
+ *
+ * The rest of the store installs settings: an address, a prompt, a model
+ * name. An MCP server installs reach — either a program that runs here with
+ * everything your account can touch, or a stranger who gets sent whatever the
+ * model decides to pass as arguments. That is not a detail for the detail
+ * screen; it is the decision, so it is put in front of the person before the
+ * install and again on the entry itself.
+ */
+function mcpWarning(item, config = item.config || {}) {
+  if (mcpTransport(config) === 'stdio') {
+    const line = `${config.command || ''} ${(config.args || []).join(' ')}`.trim();
+    return `This runs a program on this machine${line ? ` — ${line}` : ''}, started by the ` +
+      'bridge with your user\u2019s rights: it can read and change whatever you can. The ' +
+      'catalog only describes it. Install it if you trust the program itself.';
+  }
+  return `Its tools run on ${hostOf(config.url)} \u2014 a third party, not this machine and ` +
+    'not ivx/ai. Calling one sends the arguments the model chose, which can include what ' +
+    'you wrote in the chat, to that server, and its answer comes back into the ' +
+    'conversation. Nothing else in this browser is shared.';
+}
+
+/** The name the model writes in a tool call, so it cannot carry a space or the
+    slash that separates server from tool. */
+function serverName(wanted, servers) {
+  const base = String(wanted || 'mcp-server').replace(/[\s/\\]+/g, '-').replace(/^-+|-+$/g, '') || 'mcp-server';
+  const taken = new Set(servers.map(s => s.name));
+  if (!taken.has(base)) return base;
+  for (let n = 2; ; n++) if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
+}
+
 async function installMcp(item) {
   const config = item.config || {};
-  if (addons.mcp.some(m => m.storeId === item.id)) { toast('Already installed'); return; }
-  const transport = config.transport || (config.url ? 'http' : 'stdio');
+  if (isInstalled(item)) { toast('Already installed'); return; }
+  const transport = mcpTransport(config);
+  const ok = await confirmAction({
+    title: transport === 'stdio'
+      ? `Run ${item.name} on this machine?`
+      : `Send tool calls to ${hostOf(config.url)}?`,
+    body: mcpWarning(item, config),
+    okText: 'Install',
+    // A program that runs here is the one that cannot be undone by deleting a
+    // row later; a remote server is a choice, not an alarm.
+    danger: transport === 'stdio',
+  });
+  if (!ok) return;
   const servers = app.getMcpServers();
   servers.push({
-    id: store.uid(), storeId: item.id, name: item.name,
+    id: store.uid(), storeId: item.id, name: serverName(item.name, servers),
     transport,
     url: config.url || '', command: config.command || '',
     args: Array.isArray(config.args) ? config.args : [],
@@ -264,8 +370,7 @@ async function removeItem(item) {
         app.refreshChrome?.();
       }
     } else if (item.kind === 'mcp') {
-      addons.mcp = addons.mcp.filter(m => m.storeId !== item.id);
-      await app.saveMcpServers(addons.mcp);
+      await app.saveMcpServers(app.getMcpServers().filter(m => m.storeId !== item.id));
     } else if (item.kind === 'skill') {
       addons.skill = addons.skill.filter(s => s.storeId !== item.id);
       await store.kvSet('skills', addons.skill);
@@ -282,7 +387,9 @@ async function removeItem(item) {
 const isInstalled = item => {
   if (item.kind === 'provider') return app.getProviders().some(p => p.storeId === item.id);
   if (item.kind === 'agent') return app.getAgents().some(a => a.storeId === item.id);
-  if (item.kind === 'mcp') return addons.mcp.some(m => m.storeId === item.id);
+  // Asked of the app rather than of the copy this screen loaded, so a server
+  // installed a second ago already reads as installed.
+  if (item.kind === 'mcp') return app.getMcpServers().some(m => m.storeId === item.id);
   if (item.kind === 'skill') return addons.skill.some(s => s.storeId === item.id);
   return false;
 };
@@ -293,48 +400,50 @@ function marketScreen() {
   const search = el('input', {
     class: 'form-control market-search', type: 'search',
     placeholder: 'Search the store', value: query, autocomplete: 'off',
-    onchange: ev => { query = ev.target.value; refreshSheet(); },
+    onchange: async ev => {
+      query = ev.target.value;
+      refreshSheet();
+      // The catalog is in memory and filters itself; the registry is an index
+      // of thousands and does the searching at its end.
+      if (registryOn) { await loadRegistry(); refreshSheet(); }
+    },
   });
 
   const body = el('div', {});
   paintBody(body);
   return el('div', {}, [
-    el('div', { class: 'group' }, [
-      sourceRow(), el('div', { class: 'item' }, [search]),
+    // Search and the filters travel together and stay put while the list
+    // scrolls: on a page this long, the way to narrow it should not be
+    // somewhere above you.
+    el('div', { class: 'sheet-search market-head' }, [
+      search,
+      el('div', { class: 'market-chips' }, KINDS.map(k => el('button', {
+        class: `market-chip${filter === k.value ? ' is-on' : ''}`,
+        type: 'button', text: k.label,
+        onclick: () => { filter = k.value; refreshSheet(); },
+      }))),
     ]),
-    el('div', { class: 'market-chips' }, KINDS.map(k => el('button', {
-      class: `market-chip${filter === k.value ? ' is-on' : ''}`,
-      type: 'button', text: k.label,
-      onclick: () => { filter = k.value; refreshSheet(); },
-    }))),
     body,
+    // Where these entries came from, and the way to change it: one quiet line
+    // at the end of the list rather than another card competing with them.
+    // What the sources mean, and the warning that goes with the registry, is
+    // Settings' business — this only names them.
+    registryOn || source
+      ? el('p', { class: 'group-note market-sources' }, [
+          el('button', {
+            class: 'status-link', type: 'button', text: sourcesLine(), onclick: openSources,
+          }),
+        ])
+      : null,
   ]);
 }
 
-async function setSource() {
-  const url = await promptText({
-    title: 'Store address', value: source, okText: 'Set',
-    placeholder: 'https://raw.githubusercontent.com/you/ai-store/main/',
-  });
-  if (url === null) return;
-  await store.kvSet(URL_KEY, url);
-  await load(true);
-  refreshSheet();
-}
-
-function sourceRow() {
-  return el('button', {
-    class: 'item', type: 'button', onclick: setSource,
-  }, [
-    el('span', { class: 'item-main' }, [
-      el('span', { class: 'item-title', text: 'Catalog address' }),
-      el('span', {
-        class: 'item-sub',
-        text: source || 'Not set — point it at the hosted ai-store repo',
-      }),
-    ]),
-    el('span', { class: 'item-chevron', text: '›' }),
-  ]);
+/** Which sources answered, in the space of one line. */
+function sourcesLine() {
+  const bits = [];
+  if (registryOn) bits.push(registry.host(registryUrl));
+  if (source) bits.push(registry.host(source) || source);
+  return `From ${bits.join(' and ')}`;
 }
 
 function paintBody(body) {
@@ -343,19 +452,23 @@ function paintBody(body) {
     body.append(el('p', { class: 'group-note', text: 'Reading the catalog…' }));
     return;
   }
-  if (!source) {
+  if (!source && !registryOn) {
+    // Neither source is on, so there is nothing to search and the only useful
+    // thing on this screen is the way to turn one on. No early return, though:
+    // something installed earlier is still installed, and the Installed filter
+    // has to show it whichever sources are switched off today.
     body.append(el('div', { class: 'group' }, [
-      el('div', { class: 'group-note', text: 'The store is a git-hosted catalog of providers, ' +
-        'agents, MCP servers and skills. Entries are configuration, never code, and keys ' +
-        'stay in this browser.' }),
+      el('div', { class: 'group-note', text: 'The Store draws on two sources: a git-hosted ' +
+        'catalog of providers, agents and skills, and the MCP registry for MCP servers. ' +
+        'Neither is switched on. Entries are configuration, never code, and keys stay in ' +
+        'this browser.' }),
       el('div', { class: 'sheet-actions' }, [
         el('button', {
-          class: 'btn btn-primary btn-block', type: 'button', text: 'Set the store address',
-          onclick: setSource,
+          class: 'btn btn-primary btn-block', type: 'button', text: 'Choose the sources',
+          onclick: openSources,
         }),
       ]),
     ]));
-    return;
   }
   if (loadError) {
     body.append(el('div', { class: 'group' }, [
@@ -371,13 +484,34 @@ function paintBody(body) {
     if (!items?.length) return;
   }
 
+  if (registryError) {
+    body.append(el('div', { class: 'group' }, [
+      el('div', { class: 'group-note', text: `Could not read the MCP registry: ${registryError}` }),
+      el('div', { class: 'sheet-actions' }, [
+        el('button', {
+          class: 'btn btn-secondary btn-block', type: 'button', text: 'Try the registry again',
+          onclick: async () => { await loadRegistry(); refreshSheet(); },
+        }),
+      ]),
+    ]));
+  }
+
   const list = visibleItems();
+  if (registryPending && !list.length) {
+    body.append(el('p', { class: 'group-note', text: 'Searching the MCP registry\u2026' }));
+    return;
+  }
   if (!list.length) {
-    body.append(el('p', {
-      class: 'group-note',
-      text: filter === 'installed' ? 'Nothing installed yet.'
-        : query ? 'Nothing matches.' : 'The catalog is empty.',
-    }));
+    // With no catalog address and no registry, the card above already says
+    // what to do about it; a second line saying "empty" adds nothing.
+    if (source || registryOn || filter === 'installed') {
+      body.append(el('p', {
+        class: 'group-note',
+        text: filter === 'installed' ? 'Nothing installed yet.'
+          : query ? 'Nothing matches.'
+            : registryOn ? 'Nothing to show yet.' : 'The catalog is empty.',
+      }));
+    }
     return;
   }
   body.append(el('div', { class: 'group' }, list.map(itemRow)));
@@ -387,11 +521,42 @@ const visibleItems = () => {
   const q = query.trim().toLowerCase();
   const match = it => !q || [it.name, it.summary, it.description, ...(it.tags || [])]
     .some(t => String(t || '').toLowerCase().includes(q));
-  let list = Array.isArray(items) ? items : [];
-  if (filter === 'installed') list = list.filter(isInstalled);
-  else if (filter !== 'all') list = list.filter(it => it.kind === filter);
-  return list.filter(match).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  // The catalog is searched here; the registry answered the same question at
+  // its end, so its results are taken as they came.
+  const catalog = (Array.isArray(items) ? items : []).filter(match);
+  const list = [...catalog, ...registryItems];
+  const kept = filter === 'installed'
+    ? [...list.filter(isInstalled), ...installedElsewhere(list)]
+    : filter === 'all' ? list : list.filter(it => it.kind === filter);
+  return kept.sort((a, b) => String(a.name).localeCompare(String(b.name)));
 };
+
+/** MCP servers installed from a source that is not in front of us right now —
+    a registry search that has moved on, or a catalog that is switched off.
+    Installed means installed; the list should not depend on what is on screen.
+    They are described from what was saved, which is all there is to say. */
+function installedElsewhere(shown) {
+  const seen = new Set(shown.map(it => it.id));
+  return app.getMcpServers()
+    .filter(s => s.storeId && !seen.has(s.storeId))
+    .map(s => ({
+      id: s.storeId,
+      kind: 'mcp',
+      registry: String(s.storeId).startsWith('mcp:'),
+      name: s.name,
+      summary: s.transport === 'stdio'
+        ? `${s.command} ${(s.args || []).join(' ')}`.trim()
+        : s.url,
+      description: '',
+      author: '',
+      version: '',
+      tags: [],
+      config: {
+        transport: s.transport, url: s.url, command: s.command,
+        args: s.args, env: s.env, headers: s.headers,
+      },
+    }));
+}
 
 function itemRow(item) {
   const installed = isInstalled(item);
@@ -404,7 +569,12 @@ function itemRow(item) {
     el('span', { class: 'item-main' }, [
       el('span', { class: 'item-title market-title' }, [
         el('span', { text: item.name }),
-        el('span', { class: 'tag', text: KIND_LABEL[item.kind] || item.kind }),
+        // One tag, for the one thing worth knowing before opening a row: where
+        // an MCP server runs. The kind matters only when kinds are mixed, and
+        // which source it came from is answered once, at the foot of the list.
+        item.kind === 'mcp'
+          ? el('span', { class: 'tag', text: mcpTransport(item.config || {}) === 'stdio' ? 'local' : 'remote' })
+          : el('span', { class: 'tag', text: KIND_LABEL[item.kind] || item.kind }),
       ]),
       item.summary ? el('span', { class: 'item-sub', text: item.summary }) : null,
       el('span', { class: 'market-meta', text: meta(item) }),
@@ -421,14 +591,49 @@ function itemRow(item) {
   ]);
 }
 
-const meta = item => [item.author, item.version ? `v${item.version}` : '']
-  .filter(Boolean).join(' · ');
+const meta = item => [item.author, item.version ? `v${item.version}` : '', weekly(item)]
+  .filter(Boolean).join(' \u00b7 ');
+
+/** How many people ran this last week, when that is knowable. The registry
+    has no ratings to show; this is the nearest honest thing. */
+function weekly(item) {
+  const count = item.npmPackage ? usage.downloads(item.npmPackage) : undefined;
+  return typeof count === 'number' ? `${usage.compact(count)} installs/week` : '';
+}
+
+/** The npm package and what it is worth knowing about it. */
+function packageLine(item) {
+  const count = usage.downloads(item.npmPackage);
+  if (typeof count === 'number') {
+    return `${item.npmPackage} \u2014 ${usage.compact(count)} installs a week from npm`;
+  }
+  return item.npmPackage;
+}
+
+/** The repository, with GitHub's own numbers when they could be had. */
+function repoLine(item) {
+  const facts = usage.repo(item.repository);
+  if (facts === undefined) return `${item.repository}${usage.isOn() ? ' \u2014 checking\u2026' : ''}`;
+  if (!facts) return item.repository;
+  const bits = [`${usage.compact(facts.stars)} stars`];
+  if (facts.pushed) bits.push(`last commit ${usage.ago(facts.pushed)}`);
+  if (facts.archived) bits.push('archived');
+  return `${item.repository} \u2014 ${bits.join(', ')}`;
+}
 
 function detailScreen(item) {
+  // GitHub allows a browser sixty questions an hour, so it is asked about one
+  // repository at a time — the one being read right now — and the answer, or
+  // its absence, is remembered for the session.
+  if (usage.isOn() && item.repository && usage.repo(item.repository) === undefined) {
+    usage.fetchRepo(item.repository).then(() => refreshSheet());
+  }
+  // Facts wrap rather than trail off: a command line, a repository URL or what
+  // a namespace proves is worth nothing cut short with an ellipsis.
   const detail = (label, value) => el('div', { class: 'item' }, [
     el('span', { class: 'item-main' }, [
       el('span', { class: 'field-label', text: label }),
-      el('span', { class: 'item-sub', text: value }),
+      el('span', { class: 'item-sub detail-value', text: value }),
     ]),
   ]);
   const config = item.config || {};
@@ -445,9 +650,22 @@ function detailScreen(item) {
     rows.push(detail('Can ask other agents', config.tools === false ? 'no' : 'yes'));
     if (config.systemPrompt) rows.push(detail('System prompt', config.systemPrompt));
   } else if (item.kind === 'mcp') {
-    rows.push(detail('Transport', config.transport || (config.url ? 'http' : 'stdio')));
+    // Who, before what: a name in the registry is a claim, and this is the
+    // part of it that was checked.
+    if (item.publisher) {
+      rows.push(detail('Published by', `${item.publisher.label} — the registry made them prove ` +
+        (item.publisher.kind === 'github'
+          ? 'they hold that GitHub account before it would take this name.'
+          : 'they control that domain, through its DNS, before it would take this name.')));
+    }
+    rows.push(detail('Runs', mcpTransport(config) === 'stdio'
+      ? 'On this machine, started by the bridge'
+      : `On ${hostOf(config.url)}`));
     if (config.url) rows.push(detail('URL', config.url));
     if (config.command) rows.push(detail('Command', `${config.command} ${(config.args || []).join(' ')}`.trim()));
+    if (item.npmPackage) rows.push(detail('Package', packageLine(item)));
+    if (item.repository) rows.push(detail('Source', repoLine(item)));
+    if (item.updatedAt) rows.push(detail('Listed', `Last updated in the registry ${usage.ago(item.updatedAt)}`));
     if (config.tools?.length) rows.push(detail('Tools', config.tools.join(', ')));
   } else if (item.kind === 'skill') {
     if (config.instructions) rows.push(detail('Instructions', config.instructions));
@@ -458,6 +676,9 @@ function detailScreen(item) {
       ? el('div', { class: 'group' }, [el('div', { class: 'group-note', text: item.description || item.summary })])
       : null,
     el('div', { class: 'group' }, [el('div', { class: 'item-list' }, rows)]),
+    item.kind === 'mcp'
+      ? el('div', { class: 'group' }, [el('div', { class: 'group-note warn', text: mcpWarning(item, config) })])
+      : null,
     el('div', { class: 'group' }, [
       el('div', { class: 'item-list' }, [
         el('span', { class: 'item' }, [el('span', { class: 'item-main' }, [

@@ -141,6 +141,18 @@ body {
 .market-title > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .market-meta { font-size: .75rem; color: var(--bs-tertiary-color); }
 .market-chips { display: flex; flex-wrap: wrap; gap: .5rem; padding: 0 .25rem .25rem; }
+/* Search and filters as one block at the top of the Store, so the list below
+   them is the only thing that moves. Two classes deep on purpose: it has to
+   beat .sheet-search's own margin, and a sticky element with a negative top
+   margin parks that much lower — which is exactly the gap rows would then
+   scroll through. */
+.sheet-search.market-head {
+  display: flex; flex-direction: column; gap: .625rem;
+  margin: 0 0 .75rem;
+  padding: .625rem 0;
+}
+.market-head .market-chips { padding-bottom: 0; }
+.market-sources { padding-top: .25rem; text-align: center; }
 .market-chip {
   min-height: 2rem; padding: 0 .875rem;
   border: 1px solid var(--bs-border-color); border-radius: 1rem;
@@ -389,18 +401,6 @@ body {
 @keyframes blink { to { visibility: hidden; } }
 @media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
 
-/* Thinking: three dots, for a reply that finished without a word. */
-.thinking { display: inline-flex; gap: .3rem; padding: .25rem 0; }
-.thinking span {
-  width: .375rem; height: .375rem; border-radius: 50%;
-  background-color: currentColor; opacity: .35;
-  animation: think 1.2s ease-in-out infinite;
-}
-.thinking span:nth-child(2) { animation-delay: .2s; }
-.thinking span:nth-child(3) { animation-delay: .4s; }
-@keyframes think { 50% { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .thinking span { animation: none; opacity: .5; } }
-
 /* Empty state */
 .welcome {
   max-width: var(--measure); margin: 0 auto;
@@ -542,6 +542,32 @@ body {
   .sheet, .sheet-scrim, .drawer, .scrim { transition: none; }
 }
 
+/* A page, not a tray. The Store is somewhere you go and stay a while — a list
+   to scroll, a search to redo — so it takes the whole viewport rather than
+   hovering over a chat nobody is reading behind it. Same stack underneath:
+   a pushed screen and a confirmation still work exactly as they do in the
+   tray, which is why this is a modifier and not a second component. */
+.sheet-host.is-page .sheet-scrim { display: none; }
+.sheet-host.is-page .sheet {
+  top: 0; left: 0; right: 0; bottom: 0;
+  width: auto; max-height: none;
+  border: 0; border-radius: 0;
+  transform: translateY(1.5rem);
+  opacity: 0;
+  transition: transform .24s cubic-bezier(.2, .8, .2, 1), opacity .18s ease;
+}
+.sheet-host.is-page.open .sheet { transform: none; opacity: 1; }
+.sheet-host.is-page .sheet-grip { display: none; }
+.sheet-host.is-page .sheet-head { padding-top: calc(var(--safe-top, 0px) + .25rem); }
+/* Full bleed on a phone; a column that stays readable on a monitor. No top
+   padding: a sticky header inside sits below it, and the strip above it is
+   then a window onto whatever is scrolling past. */
+.sheet-host.is-page .sheet-body {
+  width: 100%; max-width: 46rem;
+  margin: 0 auto;
+  padding-top: 0;
+}
+
 .sheet-grip {
   width: 2.25rem; height: .25rem;
   margin: .5rem auto .125rem;
@@ -604,7 +630,15 @@ body {
   font-size: .8125rem; line-height: 1.5; color: var(--bs-secondary-color);
 }
 .group-note code { font-size: .9em; }
-.group-note.warn { color: var(--bs-danger-text-emphasis); }
+/* A caution, not a caption: boxed so it is read before the rows it is about. */
+.group-note.warn {
+  margin-top: .5rem;
+  padding: .625rem .75rem;
+  border: 1px solid var(--n-warn-border);
+  border-radius: var(--bs-border-radius-sm);
+  background-color: var(--n-warn-bg);
+  color: var(--n-warn-text);
+}
 
 .item-list {
   border: 1px solid var(--bs-border-color);
@@ -631,6 +665,8 @@ a.item { text-decoration: none; color: var(--bs-body-color); }
   font-size: .8125rem; color: var(--bs-secondary-color);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* On a detail screen the sub-line is the content, not a preview of it. */
+.detail-value { overflow-wrap: anywhere; white-space: normal; overflow: visible; }
 .item-value { flex: 0 0 auto; color: var(--bs-secondary-color); font-size: .875rem; }
 .item-chevron { flex: 0 0 auto; color: var(--bs-tertiary-color); font-size: 1.125rem; line-height: 1; }
 .item-check { flex: 0 0 auto; width: 1.25rem; text-align: center; color: var(--bs-emphasis-color); }
@@ -714,6 +750,8 @@ a.item { text-decoration: none; color: var(--bs-body-color); }
     max-height: min(80dvh, 44rem);
   }
   .sheet-host.open .sheet { transform: translate(-50%, 0); }
+  .sheet-host.is-page .sheet { left: 0; transform: translateY(1.5rem); }
+  .sheet-host.is-page.open .sheet { transform: none; }
   .snacks { bottom: 1.5rem; }
   .jump { bottom: 9.5rem; }
 }

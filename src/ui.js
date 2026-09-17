@@ -79,6 +79,11 @@ export function actionSnack(message, actionLabel, { onAction, onDismiss } = {}) 
 let host, sheet, sheetBody, sheetTitle, sheetBack;
 const stack = [];
 let lastFocus = null;
+/* Bumped by every open and every close. A close finishes on a transition that
+   may arrive after the next sheet is already up — "close settings, open the
+   store" is one tap — and the late finisher would then hide and strip the
+   sheet somebody is looking at. It checks this first. */
+let epoch = 0;
 
 export function initSheet() {
   host = $('#sheetHost');
@@ -111,7 +116,11 @@ export const sheetIsOpen = () => host && !host.hidden;
 
 function paint(direction = 'in') {
   const screen = stack[stack.length - 1];
-  sheetTitle.textContent = screen.title || '';
+  // A title can be a function, because a title is often a name and names get
+  // edited on the very screen that shows them. A fixed string meant renaming
+  // something left the old name in the header until the screen was left and
+  // entered again, which reads as "the change did not take".
+  sheetTitle.textContent = (typeof screen.title === 'function' ? screen.title() : screen.title) || '';
   sheetBack.hidden = stack.length < 2;
 
   // 'none' means we are re-rendering the screen the user is already looking at,
@@ -134,10 +143,19 @@ function paint(direction = 'in') {
   if (target) requestAnimationFrame(() => target.focus());
 }
 
+/**
+ * Open the sheet on `screen`.
+ *
+ * `screen.page: true` opens it as a page instead of a tray: full height, no
+ * scrim, no grip. Same stack, same Back button — what changes is whether this
+ * reads as something over the chat or somewhere you went.
+ */
 export function openSheet(screen) {
+  epoch++;
   if (!sheetIsOpen()) lastFocus = document.activeElement;
   stack.length = 0;
   stack.push(screen);
+  host.classList.toggle('is-page', Boolean(screen.page));
   host.hidden = false;
   requestAnimationFrame(() => host.classList.add('open'));
   paint();
@@ -157,10 +175,13 @@ export function popScreen() {
 
 export function closeSheet() {
   if (!sheetIsOpen()) return;
+  const mine = ++epoch;
   host.classList.remove('open');
   while (stack.length) stack.pop().onDismiss?.();
   const done = () => {
+    if (mine !== epoch) return;              // a new sheet opened in the meantime
     host.hidden = true;
+    host.classList.remove('is-page');
     clear(sheetBody);
   };
   sheet.addEventListener('transitionend', done, { once: true });
@@ -177,6 +198,42 @@ export function refreshSheet() {
 /** Replace the current screen's title without a full re-render. */
 export function setSheetTitle(title) {
   if (sheetIsOpen()) sheetTitle.textContent = title;
+}
+
+/**
+ * A screen for one stored thing, addressed by id rather than held as an object.
+ *
+ * Every editor here used to close over the entity it was opened with. That is
+ * fine right up until something replaces the object — an import reloading the
+ * arrays, a save that rebuilds its list, a delete from another screen — and
+ * then the editor is writing into an object nobody is storing any more: the
+ * edit appears to work, saves nothing, and the screen keeps showing what it
+ * was opened with. Looking the thing up on every paint, and again on every
+ * save, makes that whole family of bug impossible to write.
+ *
+ * `find` returns the current object or nothing; `render` only ever sees a live
+ * one, and when it is gone the screen says so instead of pretending.
+ */
+export function entityScreen({ find, title, render, missing = 'This was removed.' }) {
+  return {
+    title: () => {
+      const item = find();
+      return item ? title(item) : 'Gone';
+    },
+    render: () => {
+      const item = find();
+      if (item) return render(item);
+      return el('div', {}, [
+        el('p', { class: 'group-note', text: missing }),
+        el('div', { class: 'sheet-actions' }, [
+          el('button', {
+            class: 'btn btn-secondary btn-block', type: 'button', text: 'Back',
+            onclick: () => popScreen(),
+          }),
+        ]),
+      ]);
+    },
+  };
 }
 
 /* ── question screens ──────────────────────────────────────── */
