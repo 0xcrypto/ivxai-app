@@ -5,7 +5,16 @@
 
    One column at every width. Navigation is a drawer, every panel is a bottom
    sheet, and touch targets are 44px. Halfmoon supplies the tokens, form
-   controls and list groups; the shell structures below are the app's own. */
+   controls and list groups; the shell structures below are the app's own.
+
+   Halfmoon is Bootstrap-compatible, so its class namespace is Bootstrap's, and
+   a new class name here can silently inherit one. `.row` and `.toast` are real
+   Bootstrap components — that is why the list rows below are `.item` and the
+   toasts are `.snack`. Before naming one, check:
+
+     node -e "const fs=require('fs');const hm=fs.readFileSync(
+       'web/node_modules/halfmoon/css/halfmoon.min.css','utf8');console.log(
+       new RegExp('\\.'+process.argv[1]+'[,{ :]').test(hm)?'COLLIDES':'free')" my-class */
 
 :root {
   --tap: 2.75rem;               /* 44px: the smallest comfortable touch target */

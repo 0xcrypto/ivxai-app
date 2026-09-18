@@ -1,9 +1,7 @@
 # ivx/ai Chat
 
-A chat client that runs entirely in your browser. No backend, no accounts, no
-analytics, no telemetry. Point it at a model on your own machine or bring an API
-key — the app talks to that endpoint directly, and your conversations and keys
-stay in your browser.
+A chat app for AI models that runs in your browser and keeps everything on your
+own device. No account, no subscription, no company in the middle.
 
 <p align="center">
   <img src="demo.png" alt="ivx/ai Chat with a new conversation open" width="820">
@@ -11,34 +9,143 @@ stay in your browser.
 
 <p align="center">
   <a href="https://ai.ivx.run/chat">Try it</a> ·
-  <a href="https://github.com/ivxlabs/ivxai-app">Desktop app</a> ·
+  <a href="https://github.com/ivxlabs/ivxai-app/releases/latest">Download</a> ·
+  <a href="https://ai.ivx.run/docs/">Help</a> ·
   <a href="LICENSE">GPL-3.0-or-later</a>
 </p>
 
-## Private by default
+This folder is the app itself. The installable versions and the helper that
+reaches models on your own computer are at the
+[root of this repository](../README.md).
 
-- **No third-party code at runtime.** Halfmoon CSS, IBM Plex and WebLLM are npm
-  dependencies bundled into the build and served from your own origin. No CDNs,
-  no Google Fonts, no trackers, no analytics, no telemetry.
-- **A Content-Security-Policy that enforces it.** `script-src 'self'
-  'wasm-unsafe-eval'` — the page cannot execute code from anywhere else, and
-  no `eval()`/`new Function()` is allowed; the second source exists only so
-  WebLLM can compile its WebAssembly in the browser.
-- **Only the requests you asked for.** Chat completions and model lists, to the
-  base URL you configured. Check it in the Network panel. The WebLLM provider
-  is the one exception to look for: it downloads the chosen model's weights
-  from HuggingFace once and then answers entirely in this browser.
-- **Your data stays put.** Conversations and messages live in IndexedDB. Keys
-  live there too, optionally encrypted with a passphrase you choose.
+## Nobody in the middle
 
-The release build fails CI if a third-party origin appears in the bundle, so
-this stays true rather than merely being intended.
+Most chat apps keep your conversations on their servers, count what you do with
+them, and train on them. ivx/ai Chat has no server to keep anything on.
 
-## Running it
+- **No account.** Nothing to sign up for, nothing to log in to.
+- **Nothing is collected.** No tracking, no ads, no usage reports.
+- **Your chats stay on your device**, along with your keys, which you can lock
+  behind a passphrase.
+- **Nothing else is loaded.** No outside code, fonts or trackers.
+
+Your messages do go to whichever AI service you pick, which no app can change.
+Choose one you trust, or run a model on your own computer and skip that too.
+
+### The detailed version
+
+Halfmoon CSS, IBM Plex, highlight.js, Remix Icon and WebLLM are bundled into the
+build and served from your own address.
+
+A Content-Security-Policy of `script-src 'self' 'wasm-unsafe-eval'` blocks code
+from anywhere else, and `eval()` with it. The second source is there so an
+in-browser model can compile its WebAssembly.
+
+Conversations, messages and keys live in IndexedDB. Open the Network panel and
+the only calls are chat completions and model lists, to the address you set.
+
+Three switches can add to that: an in-browser model downloads its weights from
+HuggingFace once, the Store fetches its catalogue while open, and an MCP server
+is asked for its tools.
+
+The publish workflow fails the build if any other outside address shows up.
+
+## Connecting a model
+
+Open **Settings → Providers**. WebLLM, Ollama, LM Studio and OpenRouter are
+there already; add others from the list, or point "Custom OpenAI-compatible" at
+anything that speaks the OpenAI chat format. Paste a key, then **Fetch models**.
+
+WebLLM needs nothing at all: the model runs inside this browser, so you can chat
+before setting anything up. Most other services need the helper below.
+
+| Service | Address | Key |
+| --- | --- | --- |
+| WebLLM | none, runs in this browser | not needed |
+| Ollama | `http://localhost:11434` | not needed |
+| LM Studio | `http://localhost:1234/v1` | not needed |
+| llama.cpp | `http://localhost:8080/v1` | not needed |
+| Jan · vLLM · LocalAI · Text generation WebUI | see the list | not needed |
+| OpenRouter | `https://openrouter.ai/api/v1` | openrouter.ai/keys |
+| OpenAI | `https://api.openai.com/v1` | required |
+| Anthropic | `https://api.anthropic.com` | required |
+| Groq · Mistral · Together · DeepSeek | see the list | required |
+
+**Scan for local servers** finds whichever of these is already running on your
+machine.
+
+If a service does not publish a model list, choose **Type a model name**
+instead. Names you type are remembered.
+
+## The helper: ivx-bridge
+
+Browsers do not let a web page talk to programs on your own computer, and many
+online services refuse calls that come from a web page. Without the helper,
+only the in-browser model is guaranteed to work.
+
+A couple of cases can be fixed at the source instead:
+
+- **Ollama** turns them down by default. Start it as
+  `OLLAMA_ORIGINS='http://localhost:5173' ollama serve`
+- **Anthropic** needs an extra header, which the app sends for you. A key used
+  in a browser can be seen by anyone using that browser.
+
+For everything else, run the helper that comes with the installable apps:
+
+```sh
+ivx-bridge
+```
+
+Then **Settings → CORS bypass → Look for the bridge**. It is off until you turn
+it on, stores nothing, and only answers ivx/ai Chat. The installable versions
+carry it inside them already.
+
+More: [The bridge](https://ai.ivx.run/docs/bridge/).
+
+## Agents, tools and the Store
+
+An **agent** is a model saved with a name, a prompt and its settings. You get
+one per service to begin with.
+
+Chats point at an agent rather than copying it, so changing the agent changes
+every chat using it. An agent can also ask another agent for help mid-answer.
+
+**Tools** come from MCP servers. Remote ones are called over the web; one that
+runs as a program on your own machine goes through the bridge, since a browser
+cannot start a program. You choose which agents get which tools.
+
+The **Store** installs services, agents, tools and skills that other people have
+written down. Entries are settings, never code, and installing one still asks
+first.
+
+## Keys
+
+Keys sit in your browser's storage as plain text unless you turn on **Settings →
+Privacy & data → Encrypt API keys**.
+
+That locks them with a passphrase (AES-GCM, PBKDF2-SHA256, 310 000 iterations),
+kept in memory only: unlock once per session, re-lock from the sidebar. Forget
+the passphrase and the keys are gone, with no way back.
+
+## What else it does
+
+- **Settings per chat**: its own prompt, creativity, length limit and how much
+  history to send.
+- **Message actions**: copy, edit and run again from that point, retry, delete.
+- **Chat actions**: rename, duplicate, archive, save as a file.
+- **Share link**: the chat travels inside the link itself, so no server holds a
+  copy.
+- **Backup**: export everything, keys included only if you tick the box.
+- **Search** your chat titles and messages.
+- **Erase everything**, including the offline copy.
+
+## For developers
 
 ```sh
 npm install
 npm run dev        # http://localhost:5173
+npm run mock       # a fake OpenAI-compatible API on :8124
+npm run check      # a name used but never imported
 ```
 
 For the real thing, including the service worker and offline mode:
@@ -49,99 +156,38 @@ npm run preview    # http://localhost:4173
 ```
 
 `dist/` is plain static files with a relative base, so it drops into any host or
-subdirectory. Open the built site and choose "Install" / "Add to Home Screen" to
-keep it as an app; after the first load it works offline.
+subdirectory; see [Self-hosting](https://ai.ivx.run/docs/self-hosting/).
 
-## Providers
+Each file says what it is for at the top, and the traps are noted where they
+are: `public/sw.js`, the precache plugin in `vite.config.js`, the Halfmoon class
+namespace in `src/styles/app.css`, the sheet stack in `src/ui.js`.
 
-Open **Settings → Providers**. WebLLM, Ollama, LM Studio and OpenRouter are
-seeded; add more from the preset list, or point "Custom OpenAI-compatible" at
-anything speaking the OpenAI chat API. Paste a key, then **Fetch models**.
+The bridge, the desktop and mobile apps and the release process:
+[Building it](https://ai.ivx.run/docs/building/).
 
-WebLLM is first on the list and needs no configuration: the model runs inside
-this browser on WebGPU, so a fresh install can chat before anything is set up.
-
-| Provider | Base URL | Key |
-| --- | --- | --- |
-| WebLLM | none — runs in this browser | not needed |
-| Ollama | `http://localhost:11434` | not needed |
-| LM Studio | `http://localhost:1234/v1` | not needed |
-| llama.cpp | `http://localhost:8080/v1` | not needed |
-| OpenRouter | `https://openrouter.ai/api/v1` | openrouter.ai/keys |
-| OpenAI | `https://api.openai.com/v1` | required |
-| Anthropic | `https://api.anthropic.com` | required |
-| Groq · Mistral · Together · DeepSeek | see presets | required |
-
-Endpoints with no `/models` route are fine: the model picker and **Default
-model** both offer **Type a model name**, and hand-typed names are remembered
-per provider.
-
-## CORS
-
-The provider has to allow browser calls. Most hosted ones do. Two need a nudge:
-
-- **Ollama** refuses cross-origin requests by default — start it with your
-  origin allowed: `OLLAMA_ORIGINS='http://localhost:5173' ollama serve`
-- **Anthropic** needs an opt-in header for direct browser use, which the app
-  sends for you. A key used from a browser is visible to anyone using that
-  browser.
-
-**Settings → CORS bypass** is the other way round: a small daemon on your
-machine forwards the call and answers with the headers the browser wants.
+To check a build the way Pages serves it, from a subpath:
 
 ```sh
-ivx-bridge                 # listens on 127.0.0.1:8787
+npm run build
+mkdir -p /tmp/pages/chat && cp -R dist/* /tmp/pages/chat/
+cd /tmp/pages && python3 -m http.server 8125
+# http://localhost:8125/chat/
 ```
 
-Then **Look for the bridge**. It is off until you turn it on, keeps nothing, and
-only accepts pages from an origin allowlist, so a site you happen to visit
-cannot use it to reach your network. The daemon and the desktop app live in
-[ivxai-app](https://github.com/ivxlabs/ivxai-app) — the app carries the same
-bridge inside it, with nothing to set up.
-
-## Keys and encryption
-
-By default keys sit in IndexedDB in the clear, like every other web app's data.
-**Settings → Privacy & data → Encrypt API keys** wraps them in AES-GCM under a
-key derived from your passphrase (PBKDF2-SHA256, 310 000 iterations), held in
-memory only — so you unlock once per session and can re-lock from the sidebar.
-There is no recovery path: lose the passphrase, lose the keys.
-
-## What else is in it
-
-- **Per-chat settings**: system prompt, temperature, max tokens, history depth.
-- **Message actions**: copy, edit and re-run from that point, retry, delete.
-- **Chat actions**: rename, duplicate, export as JSON or Markdown, delete.
-- **Backup**: export everything to JSON, keys included only if you tick the box.
-- **Search** across chat titles and message text.
-- **Erase everything** wipes IndexedDB, preferences and the offline cache.
-- **Scan for local servers** probes the usual ports and adds whatever answers.
-
-## Deploying
-
-`.github/workflows/deploy.yml` builds every push and pull request, and publishes
-to GitHub Pages from `main`. The only setup is **Settings → Pages → Build and
-deployment → Source: GitHub Actions**.
-
-## Contributing
-
-The project layout, the service worker, the theme and the traps worth knowing
-before changing CSS are in [CONTRIBUTING.md](CONTRIBUTING.md).
+[ai.ivx.run/chat](https://ai.ivx.run/chat) is built from this folder by the
+publish workflow in
+[ivxlabs/ivxlabs.github.io](https://github.com/ivxlabs/ivxlabs.github.io): build
+`dist/`, check it, serve it at `/chat`.
 
 ## Supporting it
 
-ivx/ai Chat is part of [ivx](https://github.com/ivxlabs)' effort to strip
-trackers and advertising out of privacy-critical infrastructure, and to make
-open-weight models a practical default. No ads, no telemetry, no paid tier.
-
 - [Sponsor the project](https://github.com/sponsors/0xcrypto)
-- [Star it on GitHub](https://github.com/ivxlabs/chat) — it is how other people find it
+- [Star it on GitHub](https://github.com/ivxlabs/ivxai-app)
 
 ## Licence
 
-Free software under the **GNU GPL v3.0 or later** — see [LICENSE](LICENSE). You
-may use, study, share and modify it; a distributed modification has to carry the
-same licence with its source available.
+Free software under the **GNU GPL v3.0 or later**, see [LICENSE](LICENSE).
 
 Bundled dependencies keep their own terms: Halfmoon CSS is MIT, © 2023 Tahmid
-Khan; IBM Plex is SIL OFL, © IBM; Vite is MIT.
+Khan; IBM Plex is SIL OFL; highlight.js is BSD-3-Clause; Remix Icon and WebLLM
+are Apache-2.0; Vite is MIT.

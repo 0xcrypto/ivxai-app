@@ -3,8 +3,8 @@
 
 //! ivx/ai Chat as an installed app.
 //!
-//! The webview is the same ivx/ai Chat that runs on the web — `web/` is a
-//! submodule, and this crate adds nothing to the page. What it adds is a
+//! The webview is the same ivx/ai Chat that runs on the web — the build in
+//! `web/`, and this crate adds nothing to the page. What it adds is a
 //! [`ivx_bridge`] server running in-process on an ephemeral loopback port,
 //! which is how the app escapes CORS: providers that refuse a browser origin
 //! are reached through the bridge instead.

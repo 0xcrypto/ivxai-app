@@ -1,180 +1,150 @@
 # ivx/ai Chat
 
-The desktop app, and the standalone CORS bridge it is built around.
+A chat app for AI models that keeps everything on your own device. No account,
+no subscription, no company in the middle. Use a model running on your own
+computer, or bring a key from a service like OpenAI or Anthropic.
 
 <p align="center">
   <img src="demo.png" alt="ivx/ai Chat running as a desktop app" width="820">
 </p>
 
-[ivx/ai Chat](https://github.com/ivxlabs/chat) runs entirely in a browser and
-talks straight to whatever endpoint you point it at — right up until the
-endpoint sends no CORS headers. Ollama on its defaults, a bare llama.cpp build,
-a private proxy someone set up years ago: those servers are fine, the browser
-simply will not let a web page speak to them.
+<p align="center">
+  <a href="https://ai.ivx.run/chat">Try it</a> ·
+  <a href="https://github.com/ivxlabs/ivxai-app/releases/latest">Download</a> ·
+  <a href="https://ai.ivx.run/docs/">Help</a> ·
+  <a href="https://discord.gg/sRksdur4jw">Discord</a>
+</p>
 
-This repository solves that twice:
+## Nobody in the middle
 
-- **`ivx-bridge`** — a 2 MB daemon. Leave it running and the hosted app reaches
-  every endpoint on your machine. Nothing to install, nothing to keep updated.
-- **The app** — the same UI in a native window, with the same bridge running
-  inside it. Nothing to configure.
+Most chat apps keep your conversations on their servers, count what you do with
+them, and train on them. ivx/ai Chat has no server to keep anything on.
 
-## Install
+- **No account.** Nothing to sign up for, nothing to log in to.
+- **Nothing is collected.** No tracking, no ads, no usage reports, not even a
+  count of how often you open it.
+- **Your chats stay on your device**, along with your keys, which you can lock
+  behind a passphrase.
+- **Nothing else is loaded.** No outside code, fonts or trackers, and the app
+  is built so it cannot quietly start fetching any.
 
-macOS:
+Your messages do go to whichever AI service you pick, which no app can change.
+Choose one you trust, or run a model on your own computer and skip that too.
+
+## Any model you like
+
+- **In your browser.** Pick the built-in option and a small model runs on your
+  own computer, inside the browser. No key, no setup, nothing to install.
+- **On your computer.** Already running Ollama, LM Studio, llama.cpp, Jan,
+  vLLM, LocalAI or Text generation WebUI? **Scan for local servers** finds it.
+- **From a service.** OpenRouter, OpenAI, Anthropic, Groq, Mistral, Together,
+  DeepSeek, and most others. Paste your key and pick a model.
+
+Anything other than the in-browser model may need the helper below, depending
+on whether it accepts calls from a web page.
+
+Step-by-step setup for each: [ai.ivx.run/docs](https://ai.ivx.run/docs/).
+
+## What you can do with it
+
+- **Agents.** Save a model together with a prompt and a name, then chat with it.
+  Change the agent and every chat using it follows. Agents can ask each other
+  for help.
+- **Tools.** Let an agent use tools such as search or file access, through any
+  MCP server you add.
+- **The Store.** Ready-made services, agents, tools and skills you can install
+  in a tap.
+- **Settings per chat.** Its own prompt, creativity, length limit and how much
+  history to send.
+- **Fix and retry.** Edit any message and run the conversation again from there.
+- **Share a chat** with a link that carries the conversation inside it, so no
+  server ever holds a copy.
+- **Export** one chat as a file, or everything at once as a backup.
+- **Search** your chats.
+- **Works offline** once installed, if the model is on your own computer.
+- **Erase everything** in one go.
+
+## Three ways to use it
+
+**1. In your browser: [ai.ivx.run/chat](https://ai.ivx.run/chat)**
+
+Nothing to install. Choose *Install* or *Add to Home Screen* to keep it like
+any other app.
+
+The model that runs inside the browser needs nothing else. For most other
+services, on your computer or online, you will also want the helper below.
+
+**2. Installed, on macOS, Windows or Linux**
+
+The helper is built in, so every service works with nothing extra to set up.
+This is the easiest way to use it.
+
+Download it from the
+[releases page](https://github.com/ivxlabs/ivxai-app/releases/latest), or on a
+Mac:
 
 ```sh
 brew tap ivxlabs/tap
-brew trust ivxlabs/tap              # once: see below
-brew install --cask ivxai-chat      # the app
-brew install ivx-bridge             # or just the bridge
+brew trust ivxlabs/tap
+brew install --cask ivxai-chat
 ```
 
-Homebrew refuses to load formulae and casks from a tap you have not trusted,
-because a tap is arbitrary Ruby that runs on your machine. `brew trust` records
-the decision in `~/.homebrew/trust.json` and you only make it once. Trust
-individual packages instead with `brew trust --cask ivxlabs/tap/ivxai-chat`.
+We do not pay Apple or Microsoft for a signing certificate, so both warn you
+the first time you open it. The release notes show what to click.
 
-Windows and Linux: take the installer from
-[Releases](https://github.com/ivxlabs/ivxai-app/releases).
+Android and iOS work but are not published yet.
 
-| Platform | App | Bridge |
-| --- | --- | --- |
-| macOS | `.dmg` or `.app.tar.gz`, universal | `.tar.gz`, universal |
-| Windows | `-setup.exe` | `.tar.gz` |
-| Linux | `.AppImage` or `.deb` | `.tar.gz` |
+**3. On your own server**
 
-Nothing is notarised or signed with a paid certificate, so Gatekeeper and
-SmartScreen both object on first launch. The release notes say how to get past
-it.
+For a copy your household or team can share, on a rented server or a spare
+machine at home: [Self-hosting](https://ai.ivx.run/docs/self-hosting/).
 
-## The bridge
+## The helper: ivx-bridge
+
+Browsers do not let a web page talk to programs on your own computer, and many
+online services refuse calls that come from a web page. Neither is a fault in
+the model or tool you are using.
+
+`ivx-bridge` makes those calls on the page's behalf. The installed apps carry it
+inside them, so this only matters in the browser version: install it, leave it
+running, then turn on **Settings → CORS bypass → Look for the bridge**.
 
 ```sh
+brew install ivx-bridge     # or download it from the releases page
 ivx-bridge
 ```
 
-```
-ivx-bridge 0.1.1 on http://127.0.0.1:8787
-  accepting: http://localhost:*, https://o.eval.blog, …
-  connect:   ivx/ai Chat -> Settings -> CORS bypass -> Look for the bridge
-```
+It reads nothing, stores nothing, and only answers ivx/ai Chat.
+More: [The bridge](https://ai.ivx.run/docs/bridge/).
 
-Then in the app: **Settings → CORS bypass → Look for the bridge**. Once it
-answers, provider calls go through it, and the switch turns it off again at any
-time. `ivx-bridge --install-service` keeps it running across reboots (launchd on
-macOS, systemd `--user` on Linux); on Homebrew, `brew services start ivx-bridge`
-does the same.
+## For developers
 
-One route: `POST /proxy?url=<absolute URL>` forwards the request and streams the
-answer back with the CORS headers a browser needs.
-
-- **Nothing is inspected.** It does not know what a chat completion is and never
-  parses a body. Responses are piped through frame by frame, so a streamed
-  completion still arrives token by token.
-- **Nothing is kept.** No disk, no cache, no request log. `-v` prints one line
-  per request — method, host, status — and never headers or bodies.
-- **Browser-specific headers are dropped** before the request goes out:
-  `Origin`, `Referer`, `Cookie`, `Accept-Encoding`. Several providers reject a
-  request that claims to come from a page they do not recognise.
-
-### Who is allowed to use it
-
-A daemon that forwards to any URL is useful to any page in your browser, not
-just this one, so the origin allowlist is the whole security boundary. It holds
-because the browser sets `Origin` itself and a page cannot forge it — a site you
-happen to visit cannot borrow the bridge to reach your router's admin page.
-
-Allowed by default: `https://ai.ivx.run`, `https://o.eval.blog`,
-`https://ivxlabs.github.io`, any loopback origin on any port, and the Tauri
-webview origins. Everything else gets a 403 naming the flag you would need.
-
-A request with **no** `Origin` is allowed: those come from non-browser clients,
-which could already reach the same endpoints directly. On a shared machine, use
-`--token <secret>` — the app has a field for it.
-
-### Options
-
-```
--p, --port <port>        Port to listen on (default 8787)
-    --host <addr>        Address to bind (default 127.0.0.1)
-    --allow-origin <o>   Also accept this browser origin (repeatable)
-    --only-origin <o>    Accept only the origins given this way (repeatable)
-    --allow-any-origin   Accept every origin. Development only
-    --token <secret>     Require this token on /proxy
-    --ui-dir <dir>       Also serve a built copy of ivx/ai Chat from here
-    --insecure           Do not verify TLS upstream. Local self-signed only
-    --connect-timeout <s>  Seconds to wait for a connection (default 30)
--v, --verbose            One line per request
-    --install-service    Install and start a login service
-    --uninstall-service  Stop and remove it
-```
-
-### Safari
-
-Chrome and Firefox treat `http://127.0.0.1` as trustworthy, so an HTTPS page may
-call it. Safari does not, and blocks it as mixed content. The way out is to stop
-being cross-origin: `ivx-bridge --ui-dir web/dist` serves the app itself, so the
-page and the bridge share an origin and there is nothing left to block.
-
-## Building it
+| | |
+| --- | --- |
+| `web/` | the app itself |
+| `crates/ivx-bridge/` | the bridge: library and standalone daemon |
+| `src-tauri/` | the desktop and mobile shell, which embeds that library |
 
 ```sh
-git clone --recurse-submodules https://github.com/ivxlabs/ivxai-app
+git clone https://github.com/ivxlabs/ivxai-app
 cd ivxai-app
 npm install
 ```
 
 | What | Command | Needs |
 | --- | --- | --- |
-| The bridge alone | `cargo build --release -p ivx-bridge` | Rust |
+| The web app | `npm run web:build` | Node |
+| The bridge | `cargo build --release -p ivx-bridge` | Rust |
 | The app | `npm run build` | Rust, Node, [Tauri prerequisites](https://tauri.app/start/prerequisites/) |
 | The app, running | `npm run dev` | same |
 
-The UI is not in this repository: `web/` is a submodule pointing at
-[ivxlabs/chat](https://github.com/ivxlabs/chat), so the web app stays a web app
-and this repository stays about shipping it.
-
-```
-web/                  submodule: ivx/ai Chat, unchanged
-crates/ivx-bridge/    the CORS bridge — library and daemon
-src-tauri/            the Tauri shell, which embeds that library
-```
-
-## How the app carries the bridge
-
-The app starts its own copy of the bridge in-process, on an ephemeral loopback
-port behind a random token, and hands the page the address through a webview
-initialization script:
-
-```js
-window.__IVX_BRIDGE__ = { url: "http://127.0.0.1:50823", token: "…", source: "app" }
-```
-
-The UI picks that up and shows **Settings → CORS bypass** as "Built into this
-app". Reusing the bridge this way means the hosted build and the app make the
-same `fetch` to the same kind of endpoint — one implementation to get right, and
-`web/` never has to care where it is running.
-
-## Releasing
-
-Bump the version with `npm run bump patch` (or `minor`, `major`, or an exact
-`0.2.0`), commit it, and tag that commit `vX.Y.Z`. `release.yml` builds the app and the
-bridge for all three platforms onto one **draft** release; check the artefacts
-and publish it. Publishing updates the [Homebrew
-tap](https://github.com/ivxlabs/homebrew-tap) automatically.
-
-## Contributing
-
-Development notes, the mobile builds and the release internals are in
-[CONTRIBUTING.md](CONTRIBUTING.md).
+Mobile builds, the release process and the rest of the notes are in
+[Building it](https://ai.ivx.run/docs/building/).
 
 ## Supporting it
 
-No ads, no trackers, no accounts, no paid tier. If it is useful to you:
-
 - [Sponsor the project](https://github.com/sponsors/0xcrypto)
-- [Star it on GitHub](https://github.com/ivxlabs/chat) — it is how other people find it
+- [Star it on GitHub](https://github.com/ivxlabs/ivxai-app)
 - [Recommend it on AlternativeTo](https://alternativeto.net/software/ivx-ai-chat/about/?utm_source=badge&utm_medium=referral)
 
 <p align="center">
@@ -188,6 +158,4 @@ No ads, no trackers, no accounts, no paid tier. If it is useful to you:
 
 ## Licence
 
-GPL-3.0-or-later, the same as the web app — see [LICENSE](LICENSE). You may use,
-study, share and modify it; a distributed modification has to carry the same
-licence with its source available.
+Free software under the **GNU GPL v3.0 or later**, see [LICENSE](LICENSE).

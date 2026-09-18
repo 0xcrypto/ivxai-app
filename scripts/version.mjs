@@ -11,8 +11,8 @@
 //   web/src/mcp.js         what it calls itself to an MCP server
 //
 // so this script writes Cargo.toml and mirrors it into the other three. The
-// shell and the page it carries ship together, so they are one version: two
-// numbers drifting apart is what the submodule used to arrange.
+// shell and the page it carries ship together, so they are one version, and
+// --check fails if any of the four has drifted.
 //
 //   node scripts/version.mjs 0.2.0     set it
 //   node scripts/version.mjs patch     bump it (also: minor, major)
