@@ -1,0 +1,1 @@
+Lightweight, browser-based chat client with total control over your data

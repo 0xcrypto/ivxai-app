@@ -4,3 +4,15 @@
 /src-tauri/target
 .DS_Store
 .temp
+
+# Signing keys and anything naming one. Nothing here is ever recoverable and
+# nothing here is ever committable.
+*.jks
+*.keystore
+keystore.properties
+
+# Built browser extensions, and the Xcode project the Safari one is generated
+# into — `npm run ext:build` and `npm run ext:safari` recreate both from the
+# web build, so neither is a source of truth worth keeping.
+/packaging/extension/build
+/packaging/safari

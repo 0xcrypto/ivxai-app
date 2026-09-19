@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "The product copy, in one place. Every description, tagline and store blurb",
+    "is generated from here by scripts/branding.mjs, and `--check` fails if any",
+    "of them has drifted — the same arrangement Cargo.toml and version.mjs have",
+    "for the version number.",
+    "",
+    "`description` is the AlternativeTo listing, verbatim, and it is the source",
+    "of truth: it is the longest and most considered statement of what this is,",
+    "so everything shorter is cut from it rather than written fresh. `tagline`",
+    "is its first sentence. Change these here, run `npm run brand`, and commit",
+    "what it rewrites."
+  ],
+  "name": "ivx/ai Chat",
+
+  "tagline": "A lightweight, browser-based chat client designed for users who want total control over their data and their AI interactions.",
+
+  "short": "Lightweight, browser-based chat client with total control over your data",
+
+  "description": [
+    "ivx/ai Chat is a lightweight, browser-based chat client designed for users who want total control over their data and their AI interactions. Unlike the vast majority of AI interfaces, it has no backend, no accounts, no analytics, and zero telemetry. It is a pure frontend that acts as a direct bridge between you and your chosen AI model. The app talks to the endpoint directly, meaning your conversations and API keys never pass through a third party server and stay entirely within your browser.",
+    "Privacy is enforced by the architecture. The app is built to be private by default, featuring a strict security policy that prevents the execution of external code and blocks unauthorized data leaks. There are no CDNs, no Google Fonts, and no trackers. Your data is stored locally in your browser, and the app offers optional encryption for your API keys to ensure your credentials remain secure.",
+    "Whether you are a local host enthusiast or a cloud API power user, ivx/ai Chat supports almost every major workflow. Through WebLLM, you can run models directly on your own hardware via the browser, meaning you can start chatting immediately without any external setup. It also offers seamless integration with local servers like Ollama, LM Studio, and llama.cpp. For cloud users, it provides native support for OpenRouter, OpenAI, Anthropic, Groq, Mistral, Together, and DeepSeek, as well as any other provider that speaks the OpenAI chat API.",
+    "Despite its lightweight nature, ivx/ai Chat provides a robust set of tools for fine tuning your AI experience. You can set per chat system prompts, adjust temperature, limit max tokens, and manage history depth. You can also edit and re run messages from any point in the history, duplicate chats, and search across all your titles and message text. For data sovereignty, you can export your entire history as JSON or Markdown. Additionally, PWA support allows you to install the app to your home screen or desktop to use it as a standalone application that works offline.",
+    "Released under the GNU GPL v3.0 or later, ivx/ai Chat is free software. It is part of a larger effort to strip trackers and advertising out of privacy critical infrastructure, making open weight models a practical, private default for everyone. There are no ads, no paid tiers, and no hidden agendas. It is simply a clean, efficient tool for interacting with the future of AI."
+  ]
+}

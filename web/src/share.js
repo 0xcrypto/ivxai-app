@@ -140,6 +140,14 @@ function unb64url(text) {
   return out;
 }
 
+/* Where a shared link points when this page's own address cannot be used.
+   The extension's origin is a `chrome-extension://<id>` that exists only in
+   the browser that installed it, so a link built there would open for nobody
+   — not even for the same person on another machine. The hosted app reads the
+   identical fragment, so pointing at it costs the recipient nothing and is the
+   only address that actually resolves. Overridden by Settings → Sharing. */
+const PUBLIC_APP = 'https://ai.ivx.run/chat';
+
 /** Zip the bundle and fold it into a share link. The base is the configured
     share URL when one is set — so a link built on this machine can open at
     the public place the app is hosted — else this very page.
@@ -151,7 +159,7 @@ export async function buildLink({ conversation, messages, baseUrl = '' }) {
   };
   const zip = await zipOne('chat.json', JSON.stringify(bundle));
   const base = String(baseUrl || '').trim().replace(/\/+$/, '')
-    || `${location.origin}${location.pathname}`;
+    || (bridge.EXTENSION ? PUBLIC_APP : `${location.origin}${location.pathname}`);
   return `${base}#s=${b64url(zip)}`;
 }
 

@@ -10,6 +10,7 @@ import * as store from './store.js';
 import * as vault from './vault.js';
 import * as api from './providers.js';
 import * as bridge from './bridge.js';
+import * as access from './host-access.js';
 import * as mcp from './mcp.js';
 import * as registry from './registry.js';
 import * as market from './market.js';
@@ -154,8 +155,8 @@ function introScreen() {
         'first-class too, and a scan finds the ones already running. Hosted ' +
         'providers work as well; the choice and the key stay yours.'),
       point('Lightweight, and it runs anywhere',
-        'One page in a browser. No backend, no account, no telemetry. Your chats ' +
-        'and keys are stored here and shipped nowhere.'),
+        'One page in a browser. No backend, no accounts, no analytics and zero ' +
+        'telemetry. Your chats and keys are stored here and shipped nowhere.'),
     ]),
     el('div', { class: 'sheet-actions' }, [
       el('button', {
@@ -202,12 +203,14 @@ function rootScreen() {
       navRow('Sharing', {
         sub: app.getUI().shareBaseUrl
           ? String(app.getUI().shareBaseUrl).trim().replace(/\/+$/, '')
-          : 'Links open where the app is served',
+          : bridge.EXTENSION
+            ? 'Links open at ai.ivx.run/chat'
+            : 'Links open where the app is served',
         onclick: () => pushScreen({ title: 'Sharing', render: sharingScreen }),
       }),
       navRow('CORS bypass', {
         sub: bridge.describe(),
-        dot: bridge.ready(),
+        dot: bridge.unrestricted(),
         onclick: () => pushScreen({ title: 'CORS bypass', render: corsBypassScreen }),
       }),
       navRow('Appearance', {
@@ -234,15 +237,36 @@ function providersScreen() {
         sub: 'Ollama, LM Studio, llama.cpp, Jan, vLLM…',
         onclick: scanLocal,
       }),
-    ], bridge.ready()
-      ? 'Probed through the bridge, so a runtime that refuses browser origins still shows up.'
-      : 'A runtime that refuses browser origins will not answer. Settings → CORS bypass fixes that.'),
+      access.MANAGED && !access.granted(api.LOCAL_CANDIDATES.map(c => c.host))
+        ? actionRow('Allow this machine', {
+            sub: 'So the scan can reach a runtime that refuses browser origins',
+            // Straight out of the click: asking after an await loses the
+            // gesture the browser requires.
+            onclick: () => access.request(api.LOCAL_CANDIDATES.map(c => c.host))
+              .then(ok => {
+                toast(ok ? 'Allowed — scan now' : 'Not allowed; the scan will only find CORS-friendly runtimes',
+                  ok ? 'ok' : 'err');
+                refreshSheet();
+              }),
+          })
+        : null,
+    ], bridge.EXTENSION
+      ? (access.granted(api.LOCAL_CANDIDATES.map(c => c.host))
+          ? 'Probed directly, with no Origin attached, so a runtime that refuses ' +
+            'browser origins still shows up.'
+          : 'Until this machine is allowed above, the scan only finds runtimes ' +
+            'that answer browser origins.')
+      : bridge.ready()
+        ? 'Probed through the bridge, so a runtime that refuses browser origins still shows up.'
+        : 'A runtime that refuses browser origins will not answer. Settings → CORS bypass fixes that.'),
 
     group('Configured', providers.length
       ? providers.map(p => navRow(p.name, {
           sub: p.kind === 'webllm' ? 'Runs in this browser' : (p.baseUrl || 'No address set'),
           dot: Boolean(p.models?.length),
-          tag: api.isLocalUrl(p.baseUrl) ? 'local' : null,
+          tag: access.MANAGED && p.baseUrl && !access.granted(p.baseUrl)
+            ? 'not allowed'
+            : (api.isLocalUrl(p.baseUrl) ? 'local' : null),
           onclick: () => pushScreen(providerScreen(p.id)),
         }))
       : [actionRow('No providers yet', {})]),
@@ -421,6 +445,7 @@ function providerBody(provider) {
       // WebLLM has neither an address nor a key: the model runs right here.
       ...(provider.kind === 'webllm' ? [] : [
         el('div', { class: 'item' }, [field('Address', urlInput)]),
+        accessRow(provider),
         el('div', { class: 'item' }, [field('API key', keyInput,
           locked ? 'Unlock under Privacy & data to edit.' : 'Stored in this browser only.')]),
       ]),
@@ -449,6 +474,12 @@ function providerBody(provider) {
           const providers = app.getProviders();
           const i = providers.indexOf(provider);
           if (i >= 0) providers.splice(i, 1);
+          // The host it was allowed to reach, unless something else still
+          // needs it — one grant can cover two providers on one machine.
+          const pattern = access.patternFor(provider.baseUrl);
+          if (pattern && !providers.some(p => access.patternFor(p.baseUrl) === pattern)) {
+            await access.drop(provider.baseUrl);
+          }
           try { await vault.removeKey(provider.id); } catch { /* locked: stays encrypted */ }
           await save();
           // Its agents would point at a provider that no longer exists.
@@ -459,6 +490,40 @@ function providerBody(provider) {
       }),
     ]),
   ]);
+}
+
+/**
+ * Permission to call this endpoint, where the browser makes that a question.
+ *
+ * Absent from the hosted build and from the desktop app, where it is not one.
+ * Absent too until there is an address to ask about — the point of asking per
+ * host is that there is a host to name, and a blank field names nothing.
+ *
+ * Worth saying on the page even once it is granted. The grant covers every
+ * port on that host, which is more than the address on screen suggests, and
+ * someone who wants to know what this extension may reach should be able to
+ * read it here rather than in the browser's own settings.
+ */
+function accessRow(provider) {
+  if (!access.MANAGED || !provider.baseUrl) return null;
+  const host = access.hostOf(provider.baseUrl);
+  if (!access.patternFor(provider.baseUrl)) return null;
+
+  if (access.granted(provider.baseUrl)) {
+    return actionRow(`Allowed to reach ${host}`, {
+      sub: 'Any port on that host — the browser grants no finer',
+    });
+  }
+  return actionRow(`Allow access to ${host}`, {
+    // Called straight out of the click. An await before `request` loses the
+    // user gesture the browser insists on, and the prompt never appears.
+    onclick: () => access.request(provider.baseUrl).then(ok => {
+      if (ok) toast(`This extension may now call ${host}`, 'ok');
+      else toast('Not allowed — the endpoint has to answer browser origins, or go via the bridge', 'err', 9000);
+      refreshSheet();
+    }),
+    sub: 'Needed only if this endpoint refuses browser origins',
+  });
 }
 
 /** Returns true when the list came back; false is a normal outcome here. */
@@ -1065,12 +1130,45 @@ function corsBypassScreen() {
     s.enabled ? actionRow('Check again', { onclick: recheckBridge }) : null,
   ];
 
+  const stripped = bridge.stripsOrigin();
+
   return el('div', {}, [
+    /* What the extension does and does not settle by itself. Host permissions
+       take CORS out of the way, which is most of it — but the call still goes
+       out naming this extension in its `Origin`, and an endpoint that vets
+       that header refuses it on sight. The extension drops the header to stop
+       that; when the drop is not in place, or the endpoint turns the request
+       away regardless, the bridge is the way past, so this screen says which
+       of those is true right now rather than claiming nothing is needed. */
+    bridge.EXTENSION ? group('Provider calls', [
+      actionRow(bridge.ready() ? 'Via the bridge' : 'Direct from this extension', {
+        sub: bridge.ready()
+          ? `Every provider call goes through ${s.url}`
+          : 'Straight to the endpoint you configured',
+      }),
+      actionRow(stripped === false ? 'Sending an Origin header' : 'Origin header dropped', {
+        sub: stripped === false
+          ? 'Reload this extension on the browser’s extensions page'
+          : 'Endpoints see what any program on this machine would send',
+      }),
+    ], stripped === false
+      ? 'This extension is meant to drop its `Origin` header, and right now it ' +
+        'is not — so Ollama, LM Studio and anything else that checks that header ' +
+        'will answer 403. Reloading the extension puts the rule back. Until then, ' +
+        'the bridge reaches those endpoints anyway.'
+      : 'For an endpoint you have allowed under Providers, CORS is out of the ' +
+        'way and no `Origin` goes out for it to object to. The bridge covers the ' +
+        'rest: an endpoint you would rather not grant, one that refuses this ' +
+        'machine’s browser whatever it sends, and local MCP servers, which need ' +
+        'a program started on this machine.') : null,
+
     group('CORS bridge', rows, statusNote(s)),
 
     group('What this is', [
       actionRow('Why you might need it', {
-        sub: 'Ollama, llama.cpp and anything else that refuses browser origins',
+        sub: bridge.EXTENSION
+          ? 'Endpoints that refuse this extension, and local MCP servers'
+          : 'Ollama, llama.cpp and anything else that refuses browser origins',
         onclick: () => pushScreen({ title: 'About the bridge', render: bridgeAboutScreen }),
       }),
       linkRow('Get the bridge', BRIDGE_HELP, 'One small binary, or the full app'),
@@ -1081,8 +1179,12 @@ function corsBypassScreen() {
 /** The line under the switch: what is true right now, and what to do about it. */
 function statusNote(s) {
   if (!s.enabled) {
-    return 'Off. Provider calls go straight from this page, which only works ' +
-      'for endpoints that allow browser origins.';
+    return bridge.EXTENSION
+      ? 'Off. Provider calls go straight from this extension, which works for ' +
+        'any endpoint that answers browser origins and for the ones you have ' +
+        'allowed — turn it on for the rest, or to run local MCP servers.'
+      : 'Off. Provider calls go straight from this page, which only works ' +
+        'for endpoints that allow browser origins.';
   }
   if (!s.reachable) {
     return `Nothing answered at ${s.url}. Start it with \`ivx-bridge\`, or ` +
@@ -1401,7 +1503,8 @@ function aboutScreen() {
       linkRow('Blog', 'https://eval.blog', 'eval.blog'),
     ]),
     el('div', { class: 'group' }, [
-      para('A chat client that runs entirely in your browser. No backend, no accounts, ' +
+      para('A lightweight, browser-based chat client designed for users who want total ' +
+           'control over their data and their AI interactions. No backend, no accounts, ' +
            'no analytics, and no third-party scripts or fonts at runtime — everything it ' +
            'loads comes from this origin.'),
       para('The only network requests it makes are the ones you ask for: chat completions ' +

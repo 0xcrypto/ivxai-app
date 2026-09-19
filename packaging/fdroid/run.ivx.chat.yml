@@ -1,0 +1,115 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 0xcrypto
+#
+# Draft metadata for F-Droid's own repository.
+#
+# This file does not belong to this repository's build in any way — nothing
+# reads it here. It is kept beside the thing it describes so it cannot drift,
+# and so a release can start from a diff rather than from memory.
+#
+# To submit, copy it to metadata/run.ivx.chat.yml in a fork of
+# https://gitlab.com/fdroid/fdroiddata, strip the comments (`fdroid rewritemeta`
+# will do it for you), check it with `fdroid lint run.ivx.chat`, build it with
+# `fdroid build -v -l run.ivx.chat`, and open a merge request. Expect the build
+# recipe below to need a round or two with the maintainers: F-Droid's build
+# server is Debian, and the Rust and Node toolchains a Tauri app needs are not
+# on it by default.
+#
+# Two things to raise in the merge request rather than let them be found:
+#
+#   1. The app talks to whichever AI provider the user configures, and most of
+#      the ones in the built-in list are proprietary hosted services. None is
+#      required — the in-app model and any server on the user's own network
+#      work with no account at all — but maintainers may still want
+#      NonFreeNet declared. The `AntiFeatures` block below is commented out
+#      precisely so it is a decision and not an accident.
+#   2. The in-app model option (WebLLM) fetches model weights *and* a compiled
+#      WebAssembly model library from Hugging Face the first time it is used.
+#      That is code downloaded after install, which F-Droid has an opinion
+#      about. Nothing is fetched unless the user picks that provider and asks
+#      for a model.
+
+Categories:
+  - Internet
+License: GPL-3.0-or-later
+AuthorName: 0xcrypto
+AuthorWebSite: https://eval.blog
+WebSite: https://ai.ivx.run/chat
+SourceCode: https://github.com/ivxlabs/ivxai-app
+IssueTracker: https://github.com/ivxlabs/ivxai-app/issues
+Changelog: https://github.com/ivxlabs/ivxai-app/releases
+Donate: https://github.com/sponsors/0xcrypto
+
+# AntiFeatures:
+#   NonFreeNet:
+#     en-US: >-
+#       The built-in provider list includes hosted services that are not free
+#       software. Using one is optional; the app works with a model running on
+#       the device or on the user's own network.
+
+RepoType: git
+Repo: https://github.com/ivxlabs/ivxai-app.git
+
+Builds:
+  - versionName: 0.2.2
+    versionCode: 2002
+    commit: v0.2.2
+
+    # Keep this in step with the NDK the GitHub workflow builds against, so a
+    # difference between F-Droid's APK and ours is never the NDK's doing.
+    ndk: r27c
+
+    # Runs as root, before the build, and is the only place a Debian package or
+    # a system-wide toolchain can be installed.
+    sudo:
+      - apt-get update
+      - apt-get install -y --no-install-recommends ca-certificates curl xz-utils
+      # Node. The Debian version is too old for the frontend's build tooling.
+      - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+      - apt-get install -y nodejs
+      # Rust, pinned, outside $HOME so the unprivileged build user can read it.
+      - install -d /opt/rust
+      - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs
+          | env RUSTUP_HOME=/opt/rust/rustup CARGO_HOME=/opt/rust/cargo
+            sh -s -- -y --no-modify-path --profile minimal --default-toolchain 1.92.0
+      - env RUSTUP_HOME=/opt/rust/rustup CARGO_HOME=/opt/rust/cargo
+          /opt/rust/cargo/bin/rustup target add
+            aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+      - chmod -R a+rX /opt/rust
+
+    build:
+      - export RUSTUP_HOME=/opt/rust/rustup
+      - export CARGO_HOME=$PWD/.cargo
+      - export PATH=/opt/rust/cargo/bin:$PATH
+      # fdroidserver exports ANDROID_NDK for the version pinned above; the
+      # Tauri CLI looks for NDK_HOME.
+      - export NDK_HOME=$ANDROID_NDK
+      # Both installs are explicit rather than letting the root package's
+      # postinstall run the second one, so a failure says which tree it was in.
+      - npm ci --ignore-scripts
+      - npm --prefix web ci
+      # src-tauri/gen/ is generated, not committed, so the Gradle project has
+      # to be made here. The overlay puts back the parts `init` does not know
+      # about — see scripts/android-overlay.mjs.
+      - npm run android:init
+      # One universal APK rather than one per ABI, which keeps this to a single
+      # build entry. No keystore is configured, so it comes out unsigned and
+      # F-Droid signs it — that is the intended path, see
+      # src-tauri/android/signing.gradle.kts.
+      - npx tauri android build --ci --apk --target aarch64 armv7 x86_64
+
+    output: src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
+
+    # Removed before the source scanner runs. All three are fetched or produced
+    # during the build and none of it is in the repository.
+    scandelete:
+      - node_modules
+      - web/node_modules
+      - target
+      - src-tauri/gen
+      - .cargo
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags ^v[0-9.]+$
+CurrentVersion: 0.2.2
+CurrentVersionCode: 2002

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 0xcrypto
 
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync, statSync } from 'node:fs';
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { readFileSync, rmSync, statSync } from 'node:fs';
+import { copyFile, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, posix, relative, sep } from 'node:path';
 import { defineConfig } from 'vite';
 
@@ -55,11 +56,13 @@ function serviceWorkerPrecache() {
         // that can run this app will ever ask for it, so keep it out of the
         // install payload.
         .filter(f => !f.endsWith('.woff'))
-        // A code-split vendor chunk can dwarf the whole shell (WebLLM's is
-        // ~6 MB). Precaching it would tax every install with bytes most users
-        // never touch; it stays an ordinary same-origin asset, so the fetch
-        // handler caches it on first use instead of at install.
-        .filter(f => !f.endsWith('.js') || statSync(join(outDir, f)).size <= PRECACHE_MAX_BYTES)
+        // A lazily loaded vendor asset can dwarf the whole shell: WebLLM's
+        // chunk is 430 kB and the wasm it fetches another 4.2 MB. Precaching
+        // those would tax every install with bytes most users never touch.
+        // They stay ordinary same-origin assets, so the fetch handler caches
+        // them on first use instead — offline still works, once used.
+        .filter(f => !f.endsWith('.wasm'))
+        .filter(f => statSync(join(outDir, f)).size <= PRECACHE_MAX_BYTES)
         .sort();
 
       const urls = files.map(f => `${base}${f}`.replace(/\/{2,}/g, '/'));
@@ -70,6 +73,117 @@ function serviceWorkerPrecache() {
         .replace('__PRECACHE_MANIFEST__', JSON.stringify(urls, null, 2)));
 
       this.info?.(`sw.js: precaching ${urls.length} files (${version})`);
+    },
+  };
+}
+
+/**
+ * Pulls WebLLM's WebAssembly out of the JavaScript bundle.
+ *
+ * web-llm ships the XGrammar and tokenizer runtimes as Emscripten
+ * `-sSINGLE_FILE` builds: each wasm module is a base64 `data:` URI living in a
+ * string literal. That is 5.6 MB of a 6.0 MB vendor chunk, and it is why
+ * addons-linter rejects the Firefox package with FILE_TOO_LARGE — Mozilla
+ * will not parse a script over 5 MB, so the add-on cannot be reviewed at all.
+ *
+ * Each blob becomes a real .wasm file beside the chunk, and the literal
+ * becomes that file's URL. Emscripten already knows how to fetch a binary it
+ * was given a URL for, so nothing else has to change — and every browser now
+ * gets to compile the module as a stream rather than decode 5.6 MB of base64
+ * on the main thread first.
+ */
+function externalWasm() {
+  /* Only a literal with a payload: the bare prefix appears on its own too, as
+     the constant Emscripten compares a path against. */
+  const INLINE_WASM = /(["'`])data:application\/octet-stream;base64,([A-Za-z0-9+/=]{1000,})\1/g;
+  /* What Emscripten does next with a path that is not a data: URI — prefix it
+     with the directory the module was loaded from. An absolute URL neither
+     needs that nor survives it, so the call goes. Both shapes the minifier has
+     been seen to emit; if it grows a third, `scriptDirectory` is empty for a
+     module script anyway and the call is a no-op. */
+  const LOCATE_FILE = /^(?:;?(\w+)\((\w+)\)\|\|\(\2=\w+\(\2\)\);|;?if\(!(\w+)\((\w+)\)\)\{\4=\w+\(\4\);?\})/;
+
+  /** A name that says what the binary is and changes when the binary does. */
+  const nameFor = bytes => {
+    const text = bytes.toString('latin1');
+    const label = text.includes('xgrammar') ? 'xgrammar'
+      : text.includes('sentencepiece') ? 'tokenizers'
+      : 'runtime';
+    return `webllm-${label}-${createHash('sha256').update(bytes).digest('hex').slice(0, 8)}.wasm`;
+  };
+
+  let outDir = 'dist';
+  return {
+    name: 'ivx:external-wasm',
+    apply: 'build',
+    configResolved(config) { outDir = config.build.outDir; },
+    async closeBundle() {
+      const dir = join(outDir, 'assets');
+      let entries = [];
+      try {
+        entries = await readdir(dir);
+      } catch {
+        return;
+      }
+
+      for (const name of entries.filter(f => f.endsWith('.js'))) {
+        const file = join(dir, name);
+        const code = await readFile(file, 'utf8');
+        let out = '';
+        let cursor = 0;
+
+        INLINE_WASM.lastIndex = 0;
+        for (let match; (match = INLINE_WASM.exec(code));) {
+          const bytes = Buffer.from(match[2], 'base64');
+          const wasm = nameFor(bytes);
+          await writeFile(join(dir, wasm), bytes);
+
+          out += code.slice(cursor, match.index);
+          out += `new URL(${JSON.stringify(`./${wasm}`)},import.meta.url).href`;
+          cursor = match.index + match[0].length;
+          const locate = code.slice(cursor).match(LOCATE_FILE);
+          /* The guard is a statement, and the `;` opening it is what ended
+             the declaration the literal was part of. Dropping the match whole
+             would run the URL straight into the next statement. */
+          if (locate) {
+            cursor += locate[0].length;
+            out += ';';
+          }
+
+          this.info?.(`${wasm}: ${(bytes.length / 1e6).toFixed(1)} MB lifted out of ${name}`);
+        }
+
+        if (!cursor) continue;
+        await writeFile(file, out + code.slice(cursor));
+
+        /* Splicing an expression into minified vendor code is the kind of
+           thing that is either right or a syntax error, and a syntax error
+           here would only show up as WebLLM failing to load, months later. So
+           ask Node. The copy is because `--check` reads a bare .js as script,
+           and this is a module. */
+        const probe = join(dir, '.syntax-check.mjs');
+        await copyFile(file, probe);
+        try {
+          execFileSync(process.execPath, ['--check', probe], { stdio: 'pipe' });
+        } catch (err) {
+          this.error(`assets/${name} is not valid JavaScript after lifting its wasm out: `
+            + String(err.stderr || err).trim().split('\n').pop());
+        } finally {
+          rmSync(probe, { force: true });
+        }
+      }
+
+      /* The same build is what gets packaged for Mozilla, so the limit that
+         only AMO enforces is a build invariant here. Better a failed build
+         than a rejected upload. */
+      for (const name of await readdir(dir)) {
+        if (!name.endsWith('.js')) continue;
+        const size = statSync(join(dir, name)).size;
+        if (size > MAX_REVIEWABLE_JS_BYTES) {
+          this.error(`assets/${name} is ${(size / 1e6).toFixed(1)} MB; `
+            + `addons-linter refuses to parse a script over ${MAX_REVIEWABLE_JS_BYTES / 1e6} MB`);
+        }
+      }
     },
   };
 }
@@ -129,6 +243,10 @@ const installed = name => {
    manifest and cached on first use instead — see the filter above. */
 const PRECACHE_MAX_BYTES = 2 * 1024 * 1024;
 
+/* addons-linter reports FILE_TOO_LARGE above this and stops reading, which
+   fails the AMO upload outright — see externalWasm(). */
+const MAX_REVIEWABLE_JS_BYTES = 5 * 1024 * 1024;
+
 export default defineConfig({
   define: {
     __VERSIONS__: JSON.stringify({
@@ -142,7 +260,7 @@ export default defineConfig({
   },
   // Relative base so the build can be dropped in any directory of any host.
   base: './',
-  plugins: [licenceNotices(), serviceWorkerPrecache()],
+  plugins: [externalWasm(), licenceNotices(), serviceWorkerPrecache()],
   build: {
     target: 'es2022',
     cssCodeSplit: false,

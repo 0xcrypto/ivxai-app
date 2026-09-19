@@ -155,11 +155,17 @@ function render(size, { padding = 0 } = {}) {
 /* With arguments it writes one file at one size — that is how the desktop
    app's icon set is produced, so both repositories draw the same mark:
      node tools/make-icons.mjs /tmp/icon-1024.png 1024
-     cd ../ivxai-app && npx tauri icon /tmp/icon-1024.png                  */
-const [outPath, outSize] = process.argv.slice(2);
+     cd ../ivxai-app && npx tauri icon /tmp/icon-1024.png
+
+   A third argument insets the mark, leaving the rest transparent. The Chrome
+   Web Store asks for exactly that on the 128px icon — 96px of artwork inside
+   128px of canvas, which is 0.125 a side — because its own UI draws the
+   spacing and a full-bleed icon ends up larger than everything beside it:
+     node tools/make-icons.mjs icons/ext-128.png 128 0.125                 */
+const [outPath, outSize, outPadding] = process.argv.slice(2);
 
 if (outPath) {
-  writeFileSync(outPath, render(Number(outSize) || 1024));
+  writeFileSync(outPath, render(Number(outSize) || 1024, { padding: Number(outPadding) || 0 }));
   console.log(`wrote ${outPath}`);
 } else {
   writeFileSync('public/icons/icon-192.png', render(192));

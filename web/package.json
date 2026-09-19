@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.2.2",
   "type": "module",
-  "description": "Local-only AI chat client. Keys and conversations stay in the browser.",
+  "description": "A lightweight, browser-based chat client designed for users who want total control over their data and their AI interactions.",
   "license": "GPL-3.0-or-later",
   "author": "0xcrypto (https://eval.blog)",
   "repository": {

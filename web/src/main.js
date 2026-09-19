@@ -24,6 +24,7 @@ import * as store from './store.js';
 import * as vault from './vault.js';
 import * as api from './providers.js';
 import * as bridge from './bridge.js';
+import * as access from './host-access.js';
 import * as mcp from './mcp.js';
 import * as registry from './registry.js';
 import * as usage from './usage.js';
@@ -93,6 +94,16 @@ async function boot() {
   // Reads the saved setting only; whether the bridge is actually up is settled
   // by the verify() below, which must not hold up the first paint.
   await bridge.init();
+  // In the extension, whether our `Origin` is being dropped decides whether a
+  // provider can be called directly at all. Awaited rather than left running:
+  // it is one message to our own background script, it is what starts that
+  // script when nothing else has, and every 403 after this reads better for
+  // having the answer.
+  await bridge.checkOriginStrip();
+  // What the person has already allowed this extension to reach. Read before
+  // the first screen paints, because every provider row says whether its
+  // endpoint is one of them.
+  await access.init();
   state.providers = await store.kvGet('providers', []);
   state.defaults = { ...DEFAULTS, ...(await store.kvGet('defaults', {})) };
   await mcp.init();
@@ -101,11 +112,14 @@ async function boot() {
   await initStore();
 
   if (!state.providers.length) {
-    // WebLLM leads — the model runs in this very browser, with no server, no
-    // key and no account, so a fresh install can chat right away. The rest
-    // are the local runtimes worth finding and one hosted option.
-    state.providers = ['webllm', 'ollama', 'lmstudio', 'openrouter']
-      .map(key => api.makeProvider(api.PRESETS.find(p => p.key === key)));
+    // WebLLM, and nothing else. The model runs in this very browser, with no
+    // server, no key and no account, so a fresh install can chat right away —
+    // and it is the only provider that can be set up on someone's behalf
+    // without pretending they chose it. Ollama, LM Studio and OpenRouter used
+    // to be seeded beside it, which filled the Configured list with three
+    // entries nobody had configured, each carrying an agent that could not
+    // answer. They are a scan or two taps away; that is where they belong.
+    state.providers = [api.makeProvider(api.PRESETS.find(p => p.key === 'webllm'))];
     await saveProviders();
   }
 
@@ -122,6 +136,10 @@ async function boot() {
   // before the first chat asks what tools it has.
   await syncAgentsWithMcp();
 
+  // Installs made before the above carry the three providers nobody asked
+  // for. They go, but only where they are provably untouched.
+  await dropUnchosenProviders();
+
   // A preset's default model can change between versions (WebLLM moved to
   // Gemma 2 2B); agents still only following the provider default move with
   // it. Agents with a model of their own choosing are untouched.
@@ -129,6 +147,11 @@ async function boot() {
   for (const agent of state.agents) {
     const agentProvider = providerById(agent.providerId);
     if (!agentProvider) continue;
+    // Seeded under the library's name before it had one of its own.
+    if (agentProvider.kind === 'webllm' && agent.name === 'WebLLM') {
+      agent.name = LOCAL_AGENT_NAME;
+      migrated = true;
+    }
     if (agentProvider.kind === 'webllm' && agent.tools === undefined) {
       agent.tools = false;   // small in-browser models cannot follow the ask protocol
       migrated = true;
@@ -206,6 +229,11 @@ function registerServiceWorker() {
   // Skipped in dev: the precache manifest is stamped in at build time, and a
   // caching worker in front of the dev server only causes confusion.
   if (!import.meta.env.PROD) return;
+  // The extension already carries every file it needs, so it is offline by
+  // construction and has nothing for a precache to add. Its updates arrive as
+  // a new build of the extension, which makes the "a new version is ready"
+  // prompt below something the user cannot act on.
+  if (bridge.EXTENSION) return;
   if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
   navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).then(reg => {
     let notice = null;
@@ -284,6 +312,9 @@ const currentProvider = () => providerById(state.conv?.providerId) || state.prov
    and sampling that go with them. Conversations point at one by id and read
    its settings live, so editing an agent is how every chat using it changes. */
 
+/** What the in-browser agent is called, and the one name this app picks. */
+const LOCAL_AGENT_NAME = 'Local Chat';
+
 const saveAgents = () => store.kvSet('agents', state.agents);
 const agentById = id => state.agents.find(a => a.id === id) || null;
 const agentOf = conv => (conv?.agentId && agentById(conv.agentId)) || null;
@@ -292,7 +323,10 @@ const agentOf = conv => (conv?.agentId && agentById(conv.agentId)) || null;
     provider and the app defaults already say. */
 const newAgentFor = provider => ({
   id: store.uid(),
-  name: provider.name,
+  // The in-browser one is named for what it is to the person using it, not
+  // for the runtime underneath: it is the agent that needs nothing set up,
+  // and "WebLLM" is a library's name, not an answer to "what is this".
+  name: provider.kind === 'webllm' ? LOCAL_AGENT_NAME : provider.name,
   providerId: provider.id,
   model: provider.defaultModel || '',
   // True while the model is only inherited from the provider's default. An
@@ -307,6 +341,59 @@ const newAgentFor = provider => ({
   maxTokens: state.defaults.maxTokens,
   historyLimit: state.defaults.historyLimit,
 });
+
+/* Providers nobody chose.
+
+   A fresh install used to be given four providers — WebLLM, Ollama, LM Studio
+   and OpenRouter — on the theory that a full list is a friendly start. It
+   reads as the opposite: three of them sit under "Configured" beside ones the
+   person really did configure, they point at software that may not be
+   installed, and each carries an agent whose answer to "which model" is "none
+   yet". So they are taken back out, once, and only where nothing was ever done
+   with them: the address is still the preset's, no model was fetched or typed,
+   there is no key, the agent is as it was created, and no chat has spoken
+   through either. Anything else was chosen after all, and stays.
+
+   Skipped while the key vault is locked, where "has no key" cannot be told
+   apart from "cannot read the keys". Deleting a provider on the strength of
+   that guess is not a mistake the person could undo. */
+const UNCHOSEN_PRESETS = ['ollama', 'lmstudio', 'openrouter'];
+
+async function dropUnchosenProviders() {
+  if (!vault.status().unlocked) return;
+
+  const candidates = state.providers.filter(p => {
+    if (!UNCHOSEN_PRESETS.includes(p.preset)) return false;
+    const preset = api.PRESETS.find(x => x.key === p.preset);
+    return Boolean(preset) &&
+      p.baseUrl === preset.baseUrl &&
+      !p.defaultModel &&
+      !p.models?.length &&
+      !p.customModels?.length &&
+      !Object.keys(p.extraHeaders || {}).length &&
+      !vault.getKey(p.id);
+  });
+  if (!candidates.length) return;
+
+  // Conversations are read here rather than taken from state: this runs before
+  // the sidebar has loaded them, and an archived chat counts just as much.
+  const conversations = await store.listConversations();
+  const used = new Set(conversations.flatMap(c => [c.agentId, c.providerId]).filter(Boolean));
+  const asCreated = agent => !agent.model && !agent.systemPrompt && !used.has(agent.id);
+
+  const doomed = candidates.filter(p => !used.has(p.id) &&
+    state.agents.filter(a => a.providerId === p.id).every(asCreated));
+  if (!doomed.length) return;
+
+  const ids = new Set(doomed.map(p => p.id));
+  state.providers = state.providers.filter(p => !ids.has(p.id));
+  state.agents = state.agents.filter(a => !ids.has(a.providerId));
+  await saveProviders();
+  await saveAgents();
+  if (state.ui.lastAgentId && !agentById(state.ui.lastAgentId)) {
+    saveUI({ lastAgentId: state.agents[0]?.id ?? null });
+  }
+}
 
 /**
  * Keep every agent's tool access in step with the servers that actually exist.

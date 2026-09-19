@@ -3,7 +3,7 @@
 
 [package]
 name = "ivx-app"
-description = "ivxai Chat as a desktop and mobile app, with the CORS bridge built in."
+description = "A lightweight, browser-based chat client designed for users who want total control over their data and their AI interactions."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

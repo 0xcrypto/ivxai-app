@@ -1,7 +1,7 @@
 {
   "name": "ivx/ai Chat — private, local-first AI chat",
   "short_name": "ivx/ai Chat",
-  "description": "A private, offline-first AI chat client. Keys and conversations stay in your browser.",
+  "description": "A lightweight, browser-based chat client designed for users who want total control over their data and their AI interactions.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

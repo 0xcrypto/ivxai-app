@@ -23,7 +23,76 @@ import { kvGet, kvSet } from './store.js';
 /** Bumped when /proxy changes shape; /health reports what the daemon speaks. */
 export const PROTOCOL = 1;
 
+/**
+ * Whether this page *is* a browser extension.
+ *
+ * An extension page runs on its own origin and carries the host permissions
+ * declared in its manifest, so the browser lets it call any endpoint directly:
+ * an Ollama on its defaults, a provider that refuses web origins, plain http
+ * on loopback from a page that is not itself http.
+ *
+ * That settles CORS — the browser's rule — and not the other half. The request
+ * still goes out as `Origin: chrome-extension://<id>`, and an endpoint that
+ * vets that header answers 403 no matter what the browser permitted. The
+ * extension drops the header for exactly this reason (see background.js), but
+ * only while the background script has actually run, which is why
+ * `stripsOrigin()` below is a question and not an assumption — and why a
+ * bridge turned on here is used rather than ignored.
+ *
+ * Tested against the origin, not `chrome.runtime`, which a content script
+ * injected into an ordinary page would also see. Only a page served from the
+ * extension package itself gets those privileges.
+ */
+export const EXTENSION = /^(?:chrome|moz|safari-web)-extension:$/.test(location.protocol);
+
 export const DEFAULT_URL = 'http://127.0.0.1:8787';
+
+/* What the extension's background script said about the `Origin` header:
+   true it is being dropped, false it is not, null nobody has asked yet. */
+let originStrip = null;
+
+const HANDSHAKE_MS = 3000;
+
+/**
+ * Ask the extension whether our `Origin` is being dropped.
+ *
+ * Worth asking rather than assuming, because the rule that drops it is
+ * registered by a background script the browser starts only when it feels like
+ * it — opening the side panel does not start one — and because a build loaded
+ * before that rule existed keeps running until the extension is reloaded by
+ * hand. In both cases every POST to an origin-checking endpoint fails with a
+ * 403 that reads like a bad API key.
+ *
+ * Asking also fixes the first case: the message is an event, and the event is
+ * what starts the script. So this is a repair as much as a check, and the
+ * answer is what the 403 message and the CORS bypass screen are written from.
+ *
+ * Never throws, and never waits forever: no answer is the same fact as `false`
+ * for everything downstream.
+ */
+export async function checkOriginStrip() {
+  if (!EXTENSION) return null;
+  const runtime = globalThis.browser?.runtime ?? globalThis.chrome?.runtime;
+  if (!runtime?.sendMessage) {
+    originStrip = false;
+    return originStrip;
+  }
+  try {
+    const answer = await Promise.race([
+      runtime.sendMessage({ type: 'ivx:origin-strip' }),
+      new Promise(resolve => setTimeout(() => resolve(null), HANDSHAKE_MS)),
+    ]);
+    originStrip = Boolean(answer?.stripped);
+  } catch {
+    // No receiver: the background script is gone, or it is an older build of
+    // this extension that does not know the question.
+    originStrip = false;
+  }
+  return originStrip;
+}
+
+/** The last answer to the above: true, false, or null if never asked. */
+export const stripsOrigin = () => originStrip;
 
 /* Both spellings of loopback: which one resolves, and how fast, differs
    between machines, and a daemon bound to 127.0.0.1 may not answer on ::1. */
@@ -183,6 +252,22 @@ export function ready() {
   return Boolean(state.enabled && state.health?.ok && state.health.originAllowed);
 }
 
+/**
+ * Can this page reach an endpoint that does not answer browser origins?
+ *
+ * `ready()` asks whether the bridge is up; this asks the question the UI and
+ * the local-server scan actually care about, which the extension build answers
+ * yes to without any bridge at all.
+ */
+export function unrestricted() {
+  // An extension reaches a CORS-less endpoint by itself, but one that turns
+  // requests away on their `Origin` is only reachable while the header is
+  // being dropped. Unasked (null) is taken as yes: it is the answer in every
+  // working install, and the check that would say otherwise runs at boot.
+  if (EXTENSION && originStrip !== false) return true;
+  return ready();
+}
+
 export function status() {
   return {
     ...state,
@@ -203,6 +288,10 @@ export function status() {
  * of anything that records URLs.
  */
 export function apply(url, headers = {}) {
+  // No special case for the extension. It does reach most endpoints directly,
+  // which is why the bridge is off there by default — but someone who turned
+  // it on did so to get past an endpoint that turned them away, and quietly
+  // sending the call direct anyway would leave the switch doing nothing.
   if (!ready()) return [url, headers];
   const via = `${state.url}/proxy?url=${encodeURIComponent(url)}`;
   return [via, state.token ? { ...headers, 'X-Ivx-Token': state.token } : headers];
@@ -273,6 +362,13 @@ export async function explainUnreachable() {
 
 /** One line for a settings row. */
 export function describe() {
+  if (EXTENSION) {
+    if (state.enabled && state.health?.ok) return `On — provider calls go via ${state.url}`;
+    if (state.enabled) return `Not answering at ${state.url}`;
+    return originStrip === false
+      ? 'Off — and this extension is sending an Origin some endpoints refuse'
+      : 'Off — the extension calls endpoints directly';
+  }
   if (!state.enabled) return 'Off — the browser talks to providers directly';
   if (state.builtIn) return state.health ? 'Built into this app' : 'Built in, but not answering';
   if (!state.health) return `Not answering at ${state.url}`;

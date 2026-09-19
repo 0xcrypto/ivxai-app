@@ -6,7 +6,7 @@ cask "ivxai-chat" do
 
   url "https://github.com/ivxlabs/ivxai-app/releases/download/v#{version}/ivxai-chat-v#{version}-macos-universal.dmg"
   name "ivx/ai Chat"
-  desc "Chat UI for any LLM endpoint: no account, no backend, no telemetry"
+  desc "Lightweight, browser-based chat client with total control over your data"
   homepage "https://github.com/ivxlabs/ivxai-app"
 
   # A bare symbol is the minimum version; the ">= :big_sur" string form is

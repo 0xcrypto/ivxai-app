@@ -1,0 +1,3 @@
+The first Android build. The app is the same ivx/ai Chat that runs on the web
+and on the desktop, with the CORS bridge running inside it on loopback, so
+providers that refuse a browser origin work here too.

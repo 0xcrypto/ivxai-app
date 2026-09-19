@@ -14,6 +14,7 @@
    here, on WebGPU. Nothing leaves the machine once the weights are cached. */
 
 import * as bridge from './bridge.js';
+import * as access from './host-access.js';
 
 export const PRESETS = [
   // In-browser runtime first: no server, no key, no account, and no traffic
@@ -128,6 +129,25 @@ async function networkHint(provider, err) {
   if (via) {
     return bridge.explainUnreachable();
   }
+
+  // In the extension, whether the browser applied a CORS rule to this call
+  // depends on one thing: has this endpoint been allowed. Granted, the call
+  // went out unrewritten and a throw really is the endpoint not answering, so
+  // every hint below — all of which blame the browser — would be a wrong
+  // answer. Not granted, and it went out as an ordinary cross-origin request,
+  // which is a rule about the browser and has a one-tap fix.
+  if (bridge.EXTENSION) {
+    if (!access.granted(provider.baseUrl)) {
+      return `Could not reach ${provider.baseUrl}. This extension has not been ` +
+        `allowed to call ${access.hostOf(provider.baseUrl)} — Settings → Providers ` +
+        `→ ${provider.name} → Allow access, or use the bridge under CORS bypass.`;
+    }
+    if (local) {
+      return `Could not reach ${provider.baseUrl}. Is it running?`;
+    }
+    return `Could not reach ${provider.baseUrl}. ${err?.message || ''}`.trim();
+  }
+
   // Everything past here is the browser refusing, not the endpoint failing —
   // so the bridge is the fix, and it is worth saying so every time.
   const offer = ' Settings → CORS bypass turns on the bridge, which reaches ' +
@@ -148,7 +168,51 @@ async function networkHint(provider, err) {
   return `Network or CORS failure calling ${provider.baseUrl}. ${err?.message || ''}`.trim() + offer;
 }
 
-async function readError(res) {
+/**
+ * Name the right culprit for a status the endpoint chose to send.
+ *
+ * 401 and 403 are not the same fact, and collapsing them into "check the API
+ * key" misdirects hardest where there is no key at all: a local runtime that
+ * answers 403 is not asking for credentials, it is refusing the caller. That
+ * is usually the `Origin` header — a browser attaches one to any cross-origin
+ * POST, from an extension page as readily as from a web page, and Ollama and
+ * others check it against a list of origins they were told to accept.
+ *
+ * Which is worth saying plainly in the extension, where it is the one way a
+ * provider call still fails for a reason that is not about the provider.
+ */
+function explainStatus(status, { keyed }) {
+  if (status === 401) {
+    return keyed
+      ? 'Rejected by the provider — check the API key'
+      : 'Rejected by the provider — it wants an API key and none is set';
+  }
+  if (status === 403) {
+    if (bridge.EXTENSION) {
+      // Two different faults wear this status here, and the extension knows
+      // which one it is looking at: either the header it is meant to drop is
+      // still going out, or it is not and the endpoint refuses this caller
+      // anyway. Only the first is ours to fix, and saying so beats offering
+      // both and letting the person guess.
+      if (bridge.stripsOrigin() === false) {
+        return 'Refused by the endpoint (403), and this extension is still ' +
+          `sending Origin: ${location.origin}, which it is built to drop. ` +
+          'Reload it on the browser’s extensions page, then try again — or ' +
+          'turn on Settings → CORS bypass to go around it';
+      }
+      return 'Refused by the endpoint (403) — it is turning this caller away ' +
+        `rather than asking for a key. For Ollama, add ${location.origin} to ` +
+        'OLLAMA_ORIGINS and restart it, or reach it through Settings → CORS bypass';
+    }
+    return keyed
+      ? 'Refused by the provider (403) — the key may not have access to this model'
+      : `Refused by the endpoint (403) — it may not accept requests from ${location.origin}`;
+  }
+  if (status === 429) return 'Rate limited';
+  return `HTTP ${status}`;
+}
+
+async function readError(res, { apiKey } = {}) {
   let detail = '';
   try {
     const text = await res.text();
@@ -159,10 +223,7 @@ async function readError(res) {
   } catch { /* body already consumed or empty */ }
   if (typeof detail !== 'string') detail = JSON.stringify(detail);
   detail = detail.slice(0, 400);
-  const base = res.status === 401 || res.status === 403
-    ? 'Rejected by the provider — check the API key'
-    : res.status === 429 ? 'Rate limited'
-    : `HTTP ${res.status}`;
+  const base = explainStatus(res.status, { keyed: Boolean(apiKey) });
   return new ProviderError(detail ? `${base}: ${detail}` : base, { status: res.status });
 }
 
@@ -238,6 +299,43 @@ export async function webllmModelList() {
     .sort((a, b) => a.localeCompare(b));
 }
 
+/* WebLLM asks the adapter for 10 storage buffers per shader stage, and unlike
+   every other limit it negotiates — buffer size, binding size, workgroup size,
+   each of which it backs off on — this one it simply requires. Firefox answers
+   9 today, so an engine there dies on the first message with a sentence about
+   shader stages, and only after the model has finished downloading.
+
+   Asked here instead, before the download, and answered in one sentence: the
+   shortfall is the browser's to fix, so the count is the browser's business
+   and not the reader's. It is a live number, not a verdict — Firefox is
+   reworking these limits (bug 2006720), and the day it answers 10 this check
+   stops firing on its own, which is what "yet" is doing in the message. */
+const WEBLLM_STORAGE_BUFFERS = 10;
+
+async function webllmGpuOrThrow() {
+  if (!navigator.gpu) {
+    throw new ProviderError('This browser has no WebGPU, and WebLLM runs the model inside the browser on WebGPU.');
+  }
+  let adapter = null;
+  try {
+    adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  } catch {
+    return;   // no adapter to interrogate; let WebLLM say why in its own words
+  }
+  if (!adapter) return;
+
+  const buffers = adapter.limits?.maxStorageBuffersPerShaderStage ?? 0;
+  if (buffers >= WEBLLM_STORAGE_BUFFERS) return;
+  /* Firefox is the browser this is about, and naming it is worth more than
+     being vague at someone who can read their own title bar. Any other
+     browser short of the limit gets the same sentence about itself rather
+     than a claim about Firefox that is not true where it is being read. */
+  const firefox = navigator.userAgent.includes('Firefox');
+  throw new ProviderError(firefox
+    ? 'WebLLM is not supported on this version of Firefox yet.'
+    : 'WebLLM is not supported on this version of your browser yet.');
+}
+
 /** One engine per model, warm for the life of the page. The promise is cached
     so two chats starting at once share one download instead of racing; the
     latest download state travels with it, so someone joining mid-download
@@ -247,9 +345,7 @@ function webllmEngine(model) {
   if (!entry) {
     entry = { state: { progress: 0, text: 'Preparing the download…' }, listeners: new Set(), promise: null };
     entry.promise = (async () => {
-      if (!navigator.gpu) {
-        throw new ProviderError('This browser has no WebGPU, and WebLLM runs the model inside the browser on WebGPU.');
-      }
+      await webllmGpuOrThrow();
       const lib = await webllmLoad();
       return lib.CreateMLCEngine(model, {
         initProgressCallback: report => {
@@ -335,7 +431,7 @@ export async function listModels(provider, apiKey, signal) {
     if (err.name === 'AbortError') throw err;
     throw new ProviderError(await networkHint(provider, err), { cause: err });
   }
-  if (!res.ok) throw await readError(res);
+  if (!res.ok) throw await readError(res, { apiKey });
   const json = await res.json();
 
   const ids = provider.kind === 'ollama'
@@ -416,7 +512,7 @@ export async function streamChat({ provider, apiKey, model, system, messages, te
     if (err.name === 'AbortError') throw err;
     throw new ProviderError(await networkHint(provider, err), { cause: err });
   }
-  if (!res.ok) throw await readError(res);
+  if (!res.ok) throw await readError(res, { apiKey });
   if (!res.body) throw new ProviderError('Provider returned no response body');
 
   if (provider.kind === 'ollama') {

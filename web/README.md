@@ -1,7 +1,10 @@
 # ivx/ai Chat
 
-A chat app for AI models that runs in your browser and keeps everything on your
-own device. No account, no subscription, no company in the middle.
+ivx/ai Chat is a lightweight, browser-based chat client designed for users who
+want total control over their data and their AI interactions. It has no backend,
+no accounts, no analytics and zero telemetry: a pure frontend that talks to your
+chosen model directly, so your conversations and API keys never pass through a
+third party server and stay entirely within your browser.
 
 <p align="center">
   <img src="demo.png" alt="ivx/ai Chat with a new conversation open" width="820">

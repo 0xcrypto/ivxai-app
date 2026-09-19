@@ -40,6 +40,11 @@ jobs:
       - name: Check the tag matches the version
         run: node scripts/version.mjs --check "$TAG"
 
+      # Same idea, for the words. A store listing that disagrees with the site
+      # is not something anyone notices until it is everywhere.
+      - name: Check the copy matches branding.json
+        run: node scripts/branding.mjs --check
+
       - name: Create the draft
         env:
           GH_TOKEN: ${{ github.token }}
@@ -52,6 +57,7 @@ jobs:
             | macOS | `*-macos-universal.dmg`, or the `.app.tar.gz` |
             | Windows | `*-windows-x86_64-setup.exe` |
             | Linux | `*.AppImage` or `*.deb` |
+            | Android | the `-android-` APK for your phone's ABI, or `-android-universal.apk` if you are not sure |
 
             ### A note on signing
 
@@ -63,6 +69,10 @@ jobs:
               `xattr -dr com.apple.quarantine "/Applications/ivxai Chat.app"`.
             - **Windows** — SmartScreen shows "Windows protected your PC".
               More info → Run anyway.
+            - **Android** — the APKs are signed, but not by a store, so the
+              phone will ask you to allow installing from wherever you
+              downloaded it. An APK from here and one from F-Droid are signed
+              with different keys and cannot upgrade each other: pick one.
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists; uploads will be added to it."
@@ -186,5 +196,209 @@ jobs:
         run: |
           set -eu
           # A silently empty upload is how a broken release goes unnoticed.
+          [ -n "$(ls -A dist)" ] || { echo "nothing was built"; exit 1; }
+          gh release upload "$TAG" dist/* --clobber
+
+  # Node only, so it is quick, and independent of everything above: a browser
+  # extension shares the web build with the app and nothing else.
+  extension:
+    name: extension
+    needs: draft
+    runs-on: ubuntu-latest
+    # Lifted to the job so the publish step can ask whether they are set. A
+    # step's `if` cannot read `secrets`, and cannot see its own `env` either.
+    env:
+      WEBSTORE_CLIENT_ID: ${{ secrets.WEBSTORE_CLIENT_ID }}
+      WEBSTORE_CLIENT_SECRET: ${{ secrets.WEBSTORE_CLIENT_SECRET }}
+      WEBSTORE_REFRESH_TOKEN: ${{ secrets.WEBSTORE_REFRESH_TOKEN }}
+      WEBSTORE_ITEM_ID: ${{ secrets.WEBSTORE_ITEM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      # Builds chrome and firefox; safari is left out on purpose, since what
+      # Safari installs is an app that only Xcode on a Mac can produce.
+      - name: Build
+        run: node scripts/extension-build.mjs chrome firefox
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          cd packaging/extension/build
+          [ -n "$(ls -A ./*.zip 2>/dev/null)" ] || { echo "nothing was built"; exit 1; }
+          gh release upload "$TAG" ./*.zip --clobber
+
+      # Only with the secrets set, so a fork or a first-time clone still gets a
+      # green release with the zips attached. See packaging/extension/README.md
+      # for where these four come from.
+      - name: Publish to the Chrome Web Store
+        if: ${{ env.WEBSTORE_ITEM_ID != '' }}
+        run: |
+          set -eu
+          # Globbed rather than spelled out from the tag: the name comes from
+          # package.json, and the draft job has already refused the release if
+          # those two disagree.
+          set -- packaging/extension/build/ivxai-chat-*-chrome.zip
+          [ $# -eq 1 ] && [ -f "$1" ] || { echo "expected exactly one chrome zip, got $#"; exit 1; }
+          node scripts/webstore-publish.mjs "$1" --publish
+
+  # Kept apart from the desktop matrix: this one needs a JDK, the Android SDK
+  # and an NDK, builds the Rust library once per ABI rather than once, and is
+  # the only job that touches a signing key. Failing it should not take the
+  # desktop artefacts down with it.
+  android:
+    name: android
+    needs: draft
+    runs-on: ubuntu-latest
+    env:
+      # Each one is a separate release build of the Rust library, with LTO on,
+      # and that is nearly all of this job's wall clock. Dropping x86_64 saves
+      # a third of it and costs only emulators and Chromebooks.
+      ANDROID_TARGETS: aarch64 armv7 x86_64
+      # Pinned, and pinned to the same version packaging/fdroid asks for, so a
+      # difference between F-Droid's APK and this one is never the NDK's fault.
+      NDK_VERSION: 27.1.12297006
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+      # AGP 8.11 wants 17 or newer, and the runner's default has moved before.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          # src-tauri/gen/ is generated after this step runs, so there is no
+          # build script to hash. The lockfile moves whenever the Tauri CLI
+          # does, which is the thing that decides the Gradle project's shape.
+          key: gradle-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Install the NDK
+        run: |
+          set -eu
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - run: npm ci --ignore-scripts
+      - run: npm ci
+        working-directory: web
+
+      # Written to a temporary directory the runner throws away, so the key
+      # never exists anywhere the build could package it by accident. With no
+      # secret set the build still runs and produces an unsigned APK — see
+      # src-tauri/android/signing.gradle.kts.
+      - name: Unpack the signing key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -eu
+          if [ -z "${KEYSTORE:-}" ]; then
+            echo "::warning::ANDROID_KEYSTORE_BASE64 is not set, so the APKs will be unsigned and no device will install them"
+            exit 0
+          fi
+          printf '%s' "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      # Worked out from the version rather than read back from the generated
+      # project, because nothing has generated it yet — and because this is the
+      # number the build is supposed to produce, not the number it did.
+      - name: Work out the version code
+        run: |
+          set -eu
+          VERSION=$(node scripts/version.mjs)
+          CODE=$(node -e 'const [a,b,c] = process.argv[1].split("-")[0].split(".").map(Number); console.log(a * 1000000 + b * 1000 + c)' "$VERSION")
+          echo "ANDROID_VERSION_CODE=$CODE" >> "$GITHUB_ENV"
+          echo "$VERSION is versionCode $CODE"
+          # F-Droid reads this out of the repository, and a version with no
+          # entry reaches every user with an empty "What's new".
+          NOTES="fastlane/metadata/android/en-US/changelogs/$CODE.txt"
+          [ -f "$NOTES" ] || echo "::warning file=$NOTES::no F-Droid changelog for versionCode $CODE"
+
+      # gen/ is generated rather than committed, so the Gradle project is made
+      # here; the overlay puts back what `init` does not know about.
+      - name: Generate the Gradle project
+        run: npm run android:init
+
+      - name: App (Android)
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -eu
+          # Two passes over one set of compiled Rust: the split APKs are what a
+          # phone should actually install, the universal one is what somebody
+          # who does not know their ABI can download, and the AAB is there for
+          # the Play Store listing when that happens.
+          npx tauri android build --ci --target $ANDROID_TARGETS --apk --split-per-abi
+          npx tauri android build --ci --target $ANDROID_TARGETS --apk --aab
+
+          OUT=src-tauri/gen/android/app/build/outputs
+
+          # The generated build script falls back to versionCode 1 when it
+          # cannot find tauri.properties, and an APK stamped 1 is one Android
+          # treats as older than everything already installed and F-Droid
+          # refuses. Nothing about that failure is visible in a build log, so
+          # read it back off the APK rather than trust the overlay wrote it.
+          AAPT=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | tail -1)
+          BUILT=$("$AAPT" dump badging "$OUT/apk/universal/release/"*.apk \
+            | sed -n "s/^package:.*versionCode='\([0-9]*\)'.*/\1/p")
+          if [ "$BUILT" != "$ANDROID_VERSION_CODE" ]; then
+            echo "::error::the APK says versionCode $BUILT, the source says $ANDROID_VERSION_CODE"
+            exit 1
+          fi
+          echo "versionCode $BUILT, as expected"
+
+          mkdir -p dist
+          # Signed or not, the file is the deliverable; only its name differs,
+          # so take whatever is in the directory rather than spelling it out.
+          collect() {   # collect <directory> <extension> <name in dist/>
+            src=$(find "$1" -maxdepth 1 -name "*.$2" 2>/dev/null | head -1) || true
+            if [ -z "$src" ]; then
+              echo "::warning::nothing to collect from $1"
+              return 0
+            fi
+            cp "$src" "dist/$3"
+          }
+
+          # Gradle names its flavours after the Rust target; a download should
+          # be named after the ABI it runs on.
+          for pair in arm64:arm64-v8a arm:armeabi-v7a x86_64:x86_64 x86:x86; do
+            flavour=${pair%%:*}
+            abi=${pair##*:}
+            [ -d "$OUT/apk/$flavour/release" ] || continue
+            collect "$OUT/apk/$flavour/release" apk "ivxai-chat-$TAG-android-$abi.apk"
+          done
+          collect "$OUT/apk/universal/release" apk "ivxai-chat-$TAG-android-universal.apk"
+          collect "$OUT/bundle/universalRelease" aab "ivxai-chat-$TAG-android.aab"
+
+          ls -la dist
+
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
           [ -n "$(ls -A dist)" ] || { echo "nothing was built"; exit 1; }
           gh release upload "$TAG" dist/* --clobber

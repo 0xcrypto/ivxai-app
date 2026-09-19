@@ -1,8 +1,10 @@
 # ivx/ai Chat
 
-A chat app for AI models that keeps everything on your own device. No account,
-no subscription, no company in the middle. Use a model running on your own
-computer, or bring a key from a service like OpenAI or Anthropic.
+ivx/ai Chat is a lightweight, browser-based chat client designed for users who
+want total control over their data and their AI interactions. It has no backend,
+no accounts, no analytics and zero telemetry: a pure frontend that talks to your
+chosen model directly, so your conversations and API keys never pass through a
+third party server and stay entirely within your browser.
 
 <p align="center">
   <img src="demo.png" alt="ivx/ai Chat running as a desktop app" width="820">
@@ -124,6 +126,7 @@ More: [The bridge](https://ai.ivx.run/docs/bridge/).
 | `web/` | the app itself |
 | `crates/ivx-bridge/` | the bridge: library and standalone daemon |
 | `src-tauri/` | the desktop and mobile shell, which embeds that library |
+| `packaging/extension/` | the same app as a Chrome, Firefox and Safari extension |
 
 ```sh
 git clone https://github.com/ivxlabs/ivxai-app
@@ -137,6 +140,9 @@ npm install
 | The bridge | `cargo build --release -p ivx-bridge` | Rust |
 | The app | `npm run build` | Rust, Node, [Tauri prerequisites](https://tauri.app/start/prerequisites/) |
 | The app, running | `npm run dev` | same |
+| The extensions | `npm run ext:build` | Node |
+| ...checked in a real browser | `npm run ext:test` | Chrome and Firefox installed |
+| ...the Safari one | `npm run ext:safari` | Xcode |
 
 Mobile builds, the release process and the rest of the notes are in
 [Building it](https://ai.ivx.run/docs/building/).

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-License-Identifier: GPL-3.0-or-later
+  Copyright (C) 2026 0xcrypto
+
+  Tauri derives these from productName in tauri.conf.json, which has to stay a
+  filesystem-safe "ivxai Chat" because it also names the desktop bundles. On
+  Android the label is only ever shown to a person, so it can be the name the
+  app actually goes by everywhere else.
+-->
+<resources>
+    <string name="app_name">ivx/ai Chat</string>
+    <string name="main_activity_title">ivx/ai Chat</string>
+</resources>
