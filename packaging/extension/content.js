@@ -398,23 +398,33 @@
   }
 
   /**
-   * Fill the agent picker from what the app last saved.
+   * Fill the agent picker from what the app last saved, opened on the agent
+   * the panel is already talking to.
    *
-   * The list is the app's, and the app may never have run in this browser — so
-   * the picker is built with the honest answer already in it and the names are
-   * added when they arrive. Either way the request carries an id or a null, and
-   * a null means the agent the chat is already on.
+   * The list is the app's and has to be fetched, so the picker is built with a
+   * placeholder that already means the right thing — a request carrying no id
+   * is answered by the active agent either way — and replaced by real names
+   * when they arrive. If the app has never run in this browser, or the
+   * background script cannot be reached, the placeholder is what stays, and it
+   * still sends the request to the agent the person is looking at.
    */
   async function fillAgents(select) {
     select.replaceChildren(new Option('Active agent', ''));
     let known = [];
+    let active = null;
     try {
-      known = (await api.runtime.sendMessage({ type: 'ivx:page-agents' }))?.agents || [];
+      const reply = await api.runtime.sendMessage({ type: 'ivx:page-agents' });
+      known = reply?.agents || [];
+      active = reply?.active ?? null;
     } catch {
-      return;   // background asleep and unreachable; "Active agent" still works
+      return;   // background asleep; the placeholder covers it
     }
-    if (!select.isConnected) return;
-    for (const agent of known) select.append(new Option(agent.name, agent.id));
+    if (!select.isConnected || !known.length) return;
+    select.replaceChildren(...known.map(agent => new Option(agent.name, agent.id)));
+    // Named rather than left implicit: "Active agent" says nothing about which
+    // agent that is, and the chat it belongs to is in a panel the page cannot
+    // see. Falling back to the first entry only when the active one is gone.
+    if (active && known.some(agent => agent.id === active)) select.value = active;
   }
 
   /* ── what the page does ────────────────────────────────────── */

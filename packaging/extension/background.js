@@ -211,7 +211,7 @@ api.tabs.onRemoved.addListener(id => {
                    *said* — only what it asked for through the tool. */
 
 const SITES_KEY = 'ivx:page-sites';    // match patterns page tools may run on
-const AGENTS_KEY = 'ivx:agents';       // names for content.js's agent picker
+const AGENTS_KEY = 'ivx:agents';       // what content.js's agent picker offers
 const QUEUE_KEY = 'ivx:page-queue';    // requests the app has not claimed yet
 const SCRIPT_ID = 'ivx-page-tools';
 
@@ -395,22 +395,28 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     }
 
-    /* From the app whenever its agents change: the names content.js offers in
-       its picker. Only names and ids — nothing about a provider, a model or a
-       key is ever put where a page could reach it. */
+    /* From the app whenever its agents change, or whenever the chat on screen
+       moves to a different one: the names content.js offers in its picker, and
+       which of them that picker should open on. Only names and ids — nothing
+       about a provider, a model or a key is ever put where a page could reach
+       it. */
     case 'ivx:agents': {
       const agents = (message.agents || [])
         .map(a => ({ id: String(a.id), name: String(a.name) }))
         .slice(0, 100);
-      (local?.set({ [AGENTS_KEY]: agents }) ?? Promise.resolve())
+      const active = message.active ? String(message.active) : null;
+      (local?.set({ [AGENTS_KEY]: { agents, active } }) ?? Promise.resolve())
         .catch(() => { /* nothing to store into; the picker falls back */ })
         .then(() => sendResponse({ ok: true }));
       return true;
     }
 
-    /* From a page: who can be asked. */
+    /* From a page: who can be asked, and who is answering right now. */
     case 'ivx:page-agents': {
-      read(local, AGENTS_KEY, []).then(agents => sendResponse({ agents }));
+      read(local, AGENTS_KEY, {}).then(held => sendResponse({
+        agents: held?.agents || [],
+        active: held?.active ?? null,
+      }));
       return true;
     }
 

@@ -92,11 +92,32 @@ async function claim() {
   }
 }
 
-/** Tell the page's agent picker who there is to ask. Names and ids only —
-    a provider, a model and a key are none of a page's business. */
-export function publishAgents(agents) {
+/* The last thing published, so the same list is not sent again. This is
+   called from updateChip, which runs on every render that could have changed
+   the answering agent — most of which changed neither. */
+let published = '';
+
+/**
+ * Tell the page's agent picker who there is to ask, and which of them the
+ * chat on screen is on.
+ *
+ * `active` is what the picker opens on, so the bar offers the agent the person
+ * can see they are talking to rather than whichever one they used last.
+ *
+ * Names and ids only. A provider, a model, an endpoint and a key are none of a
+ * page's business, and this is the one thing the app puts where a page can
+ * reach it.
+ */
+export function publishAgents(agents, active = null) {
   if (!AVAILABLE) return;
-  send({ type: 'ivx:agents', agents: agents.map(a => ({ id: a.id, name: a.name })) });
+  const payload = {
+    agents: agents.map(a => ({ id: a.id, name: a.name })),
+    active: active ?? null,
+  };
+  const key = JSON.stringify(payload);
+  if (key === published) return;
+  published = key;
+  send({ type: 'ivx:agents', ...payload });
 }
 
 /* ── which sites ───────────────────────────────────────────── */

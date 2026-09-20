@@ -203,7 +203,7 @@ async function boot() {
      request is always already waiting by the time we get here — and the names
      the page's own agent picker offers are only as current as the last time
      the app published them. */
-  pageTools.publishAgents(state.agents);
+  publishAgents();
   pageTools.init(handlePageAction);
 
   // The syntax grammars are a chunk of their own, fetched after the shell is
@@ -336,7 +336,7 @@ const saveAgents = async () => {
   // The page's own agent picker reads a copy of these names; republishing on
   // every save is what keeps it from offering one that has been renamed or
   // deleted since. Names and ids only — see page-tools.js.
-  pageTools.publishAgents(state.agents);
+  publishAgents();
 };
 const agentById = id => state.agents.find(a => a.id === id) || null;
 const agentOf = conv => (conv?.agentId && agentById(conv.agentId)) || null;
@@ -733,6 +733,10 @@ function nextModel(provider = currentProvider()) {
 
 function updateChip() {
   const agent = agentOf(state.conv);
+  /* The page's own agent picker rides along here. The chip names whoever is
+     answering the chat on screen, which is exactly what that picker has to
+     open on, and every path that changes one already calls this. */
+  publishAgents();
   // The chip names the model, not just the agent: changing an agent's model is
   // otherwise a silent edit, and the chip is the only place the change shows.
   if (agent) {
@@ -745,6 +749,12 @@ function updateChip() {
     ? (model ? `${provider.name} · ${model}` : `${provider.name} · choose a model`)
     : 'Add a provider';
 }
+
+/** Who a page may ask, and which of them the chat on screen is on — so the
+    bar's picker opens on the agent the panel is already talking to rather
+    than on whichever one was used last. */
+const publishAgents = () => pageTools.publishAgents(
+  state.agents, agentOf(state.conv)?.id ?? state.ui.lastAgentId ?? null);
 
 /** Pull the model list in the background; silent on failure. */
 async function warmModels(provider) {
@@ -1503,9 +1513,12 @@ async function handlePageAction(request) {
     openSettings(shell);
     return;
   }
-  // The page offers a picker but does not require one; a null means whichever
-  // agent this app is already on, which is what the bar's plain buttons send.
+  /* The page offers a picker but does not require one — Summarize and
+     Translate send no agent at all. A null means the agent answering the chat
+     on screen, which is the one the person can see they are talking to; the
+     last-used agent is only a fallback for a panel showing no chat yet. */
   const agent = (agentId && agentById(agentId))
+    || agentOf(state.conv)
     || state.agents.find(a => a.id === state.ui.lastAgentId)
     || state.agents[0];
 
