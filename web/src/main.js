@@ -26,6 +26,8 @@ import * as api from './providers.js';
 import * as bridge from './bridge.js';
 import * as access from './host-access.js';
 import * as mcp from './mcp.js';
+import * as pageTools from './page-tools.js';
+import * as attach from './attach.js';
 import * as registry from './registry.js';
 import * as usage from './usage.js';
 import * as share from './share.js';
@@ -51,6 +53,9 @@ const DEFAULTS = {
 
 const state = {
   ui: store.loadUI(),
+  // Files picked, pasted or dropped, waiting for the message that will carry
+  // them. Nothing here is written to the database until that message is sent.
+  attachments: [],
   providers: [],
   agents: [],
   defaults: { ...DEFAULTS },
@@ -85,6 +90,8 @@ async function boot() {
     jump: $('#jump'),
     composer: $('#composer'),
     shareBar: $('#shareBar'),
+    tray: $('#attachTray'),
+    fileInput: $('#fileInput'),
   });
 
   initSheet();
@@ -189,6 +196,15 @@ async function boot() {
   if (!shared && !ready && !greeted) askUnlock();
 
   registerServiceWorker();
+
+  /* Page tools last, and only once there is a chat on screen for a request
+     from a page to land in. Both halves of this matter: the click that sends a
+     request from a page is the same click that opens this panel, so the
+     request is always already waiting by the time we get here — and the names
+     the page's own agent picker offers are only as current as the last time
+     the app published them. */
+  pageTools.publishAgents(state.agents);
+  pageTools.init(handlePageAction);
 
   // The syntax grammars are a chunk of their own, fetched after the shell is
   // up rather than before it. Whatever code is already on screen is coloured
@@ -315,7 +331,13 @@ const currentProvider = () => providerById(state.conv?.providerId) || state.prov
 /** What the in-browser agent is called, and the one name this app picks. */
 const LOCAL_AGENT_NAME = 'Local Chat';
 
-const saveAgents = () => store.kvSet('agents', state.agents);
+const saveAgents = async () => {
+  await store.kvSet('agents', state.agents);
+  // The page's own agent picker reads a copy of these names; republishing on
+  // every save is what keeps it from offering one that has been renamed or
+  // deleted since. Names and ids only — see page-tools.js.
+  pageTools.publishAgents(state.agents);
+};
 const agentById = id => state.agents.find(a => a.id === id) || null;
 const agentOf = conv => (conv?.agentId && agentById(conv.agentId)) || null;
 
@@ -468,6 +490,9 @@ const field = (label, control) => el('div', { class: 'field' }, [
 
 const ASK_RE = /<ask\s+agent="([^"]*)"\s*>([\s\S]*?)<\/ask>/g;
 const TOOL_RE = /<tool\s+name="([^"]*)"\s*>([\s\S]*?)<\/tool>/g;
+/* The third block lives in page-tools.js with the rest of what only the
+   extension can do. It is the same kind of protocol, read the same way. */
+const WRITE_RE = pageTools.WRITE_RE;
 
 /** The complete ask blocks in a reply, in order. */
 const askCalls = content => [...String(content || '').matchAll(ASK_RE)]
@@ -486,17 +511,20 @@ function splitAskBlocks(content) {
   const blocks = [
     ...[...String(content || '').matchAll(ASK_RE)].map(m => ({ m, kind: 'ask' })),
     ...[...String(content || '').matchAll(TOOL_RE)].map(m => ({ m, kind: 'tool' })),
+    ...[...String(content || '').matchAll(WRITE_RE)].map(m => ({ m, kind: 'write' })),
   ].sort((a, b) => a.m.index - b.m.index);
   for (const { m, kind } of blocks) {
     const head = content.slice(last, m.index);
     if (head.trim()) out.push({ text: head });
     if (kind === 'ask') out.push({ ask: true, agent: m[1], prompt: m[2] });
+    // The written text is the second group; the first is the optional mode.
+    else if (kind === 'write') out.push({ toolCall: true, name: 'write', args: m[2] });
     else out.push({ toolCall: true, name: m[1], args: m[2] });
     last = m.index + m[0].length;
   }
   const tail = content.slice(last);
   const cut = Math.min(
-    ...['<ask', '<tool'].map(tag => {
+    ...['<ask', '<tool', '<write'].map(tag => {
       const at = tail.indexOf(tag);
       return at < 0 ? Infinity : at;
     }),
@@ -512,6 +540,9 @@ function splitAskBlocks(content) {
 
 const MAX_TOOL_ROUNDS = 3;
 const MAX_MCP_ROUNDS = 8;
+/* Lower than the others on purpose: a write either lands or says why it did
+   not, and a model that has not got it right by the third try will not. */
+const MAX_WRITE_ROUNDS = 3;
 
 /** The system-prompt section that teaches the tools, or '' when both are off.
     Sub-threads never receive it — their runs go straight to streamChat — so a
@@ -865,6 +896,10 @@ function startDraft() {
     agentId: agent?.id ?? null,
   };
   state.messages = [];
+  // The URLs the old thread handed out point at nothing on screen now, and
+  // the tray belongs to the chat that was open, not to this one.
+  attach.releaseAll();
+  clearAttachTray();
   saveUI({ lastConvId: null });
   renderConvList();
   renderHeader();
@@ -879,6 +914,8 @@ async function openConversation(id) {
   exitSharedPreview();
   state.conv = conv;
   state.messages = await store.listMessages(id);
+  attach.releaseAll();
+  clearAttachTray();
   saveUI({ lastConvId: id });
   renderConvList();
   renderHeader();
@@ -944,6 +981,83 @@ async function addSharedChat() {
   }
 }
 
+/* ── attachments in the composer ───────────────────────────
+
+   Files wait in the tray until the message that carries them is sent. They
+   are deliberately not written down on the way in: a file attached and then
+   thought better of, or a chat abandoned with a video sitting in the tray,
+   leaves nothing behind in the database. */
+
+/* Thumbnails for the tray. Separate from the URLs a sent message uses,
+   because these point at Files the browser handed us rather than at anything
+   stored, and they are let go the moment the tray is emptied. */
+const draftUrls = new Map();
+
+async function addFiles(files) {
+  if (state.shared) return;
+  const incoming = [...(files || [])].filter(f => f && (f.size > 0 || f.type));
+  if (!incoming.length) return;
+  for (const file of incoming) {
+    try {
+      state.attachments.push(await attach.fromFile(file));
+    } catch (err) {
+      toast(err.message || `Could not attach ${file.name}`, 'err', 7000);
+    }
+  }
+  renderAttachTray();
+  updateSendState();
+  dom.input.focus();
+}
+
+function removeAttachment(id) {
+  state.attachments = state.attachments.filter(a => a.id !== id);
+  releaseDraftUrl(id);
+  renderAttachTray();
+  updateSendState();
+}
+
+/** Empty the tray — sent, or the chat changed underneath it. */
+function clearAttachTray() {
+  for (const id of [...draftUrls.keys()]) releaseDraftUrl(id);
+  state.attachments = [];
+  renderAttachTray();
+}
+
+function releaseDraftUrl(id) {
+  const url = draftUrls.get(id);
+  if (!url) return;
+  URL.revokeObjectURL(url);
+  draftUrls.delete(id);
+}
+
+function draftUrl(att) {
+  if (!draftUrls.has(att.id)) draftUrls.set(att.id, URL.createObjectURL(att.blob));
+  return draftUrls.get(att.id);
+}
+
+/** One chip per waiting file: a thumbnail where there is one to show, the
+    file's own icon where there is not, and a way to take it back out. */
+function renderAttachTray() {
+  const tray = clear(dom.tray);
+  tray.hidden = !state.attachments.length;
+  for (const att of state.attachments) {
+    tray.append(el('div', { class: 'attach-chip', title: attach.describe(att) }, [
+      att.kind === 'image'
+        ? el('img', { class: 'attach-chip-thumb', src: draftUrl(att), alt: '' })
+        : el('span', { class: `attach-chip-icon ${attach.ICONS[att.kind]}`, 'aria-hidden': 'true' }),
+      el('span', { class: 'attach-chip-text' }, [
+        el('span', { class: 'attach-chip-name', text: att.name }),
+        el('span', { class: 'attach-chip-size', text: attach.formatSize(att.size) }),
+      ]),
+      el('button', {
+        class: 'attach-chip-x ri-close-line', type: 'button',
+        'aria-label': `Remove ${att.name}`,
+        onclick: () => removeAttachment(att.id),
+      }),
+    ]));
+  }
+}
+
 /* ── message rendering ─────────────────────────────────────── */
 
 function messageNode(msg) {
@@ -965,10 +1079,29 @@ function paintBody(body, msg) {
   clear(body);
 
   if (msg.role === 'user') {
-    body.textContent = msg.content;
+    if (msg.attachments?.length) body.append(attachmentsNode(msg.attachments));
+    if (msg.content) body.append(el('div', { class: 'bubble-text', text: msg.content }));
     return;
   }
   if (msg.role === 'tool') {
+    if (msg.pageWrite) {
+      // What went into a field on the page, and whether it arrived. Open by
+      // default when it did not: a write that failed is the whole message.
+      body.append(el('details', { class: 'tool-ask', open: msg.pageError }, [
+        el('summary', { class: 'tool-ask-head' }, [
+          el('span', {
+            class: 'tool-ask-label',
+            text: (msg.pageError ? 'Could not write to ' : 'Wrote into ') +
+              (msg.pageLabel ? `“${msg.pageLabel}”` : 'the page field'),
+          }),
+        ]),
+        el('div', { class: 'tool-ask-body' }, [
+          msg.pageText ? el('div', { class: 'tool-ask-prompt', text: msg.pageText }) : null,
+          el('div', { class: 'tool-ask-answer', text: msg.content }),
+        ]),
+      ]));
+      return;
+    }
     if (msg.mcpTool) {
       // The record of an MCP tool round: which server and tool ran, with what
       // arguments, and what came back.
@@ -1028,6 +1161,89 @@ function paintBody(body, msg) {
   }
 }
 
+/**
+ * What a message brought with it, as cards under the text.
+ *
+ * The bytes are in IndexedDB, so a card goes up empty and fills when its blob
+ * arrives: a thread with twenty pictures in it paints at once and does not
+ * wait on any of them. A card whose bytes are gone — a shared chat, whose link
+ * could never have carried them — says so rather than showing a broken frame.
+ */
+function attachmentsNode(list) {
+  return el('div', { class: 'att-grid' }, list.map(attachmentNode));
+}
+
+function attachmentNode(meta) {
+  const label = el('span', { class: 'att-name', text: meta.name });
+  const size = el('span', { class: 'att-size', text: attach.formatSize(meta.size) });
+
+  if (meta.kind === 'image') {
+    const img = el('img', { class: 'att-image', alt: meta.name, loading: 'lazy' });
+    const card = el('button', {
+      class: 'att-card att-media', type: 'button', title: attach.describe(meta),
+      onclick: () => openAttachment(meta),
+    }, [img]);
+    fillCard(card, meta, url => { img.src = url; });
+    return card;
+  }
+  if (meta.kind === 'video' || meta.kind === 'audio') {
+    const player = el(meta.kind, { class: `att-${meta.kind}`, controls: true, preload: 'metadata' });
+    const card = el('div', { class: 'att-card att-media' }, [
+      player,
+      el('span', { class: 'att-line' }, [label, size]),
+    ]);
+    fillCard(card, meta, url => { player.src = url; });
+    return card;
+  }
+  // Text and everything else: a card that names the file and hands it back.
+  return el('button', {
+    class: 'att-card att-file', type: 'button', title: attach.describe(meta),
+    onclick: () => saveAttachment(meta),
+  }, [
+    el('span', { class: `att-icon ${attach.ICONS[meta.kind] || attach.ICONS.file}`, 'aria-hidden': 'true' }),
+    el('span', { class: 'att-line' }, [label, size]),
+  ]);
+}
+
+/** Fill a card once its blob is out of the database, or mark it as gone. */
+function fillCard(card, meta, apply) {
+  attach.objectUrl(meta.id).then(url => {
+    if (url) { apply(url); return; }
+    card.classList.add('att-missing');
+    clear(card).append(
+      el('span', { class: `att-icon ${attach.ICONS[meta.kind] || attach.ICONS.file}`, 'aria-hidden': 'true' }),
+      el('span', { class: 'att-line' }, [
+        el('span', { class: 'att-name', text: meta.name }),
+        el('span', { class: 'att-size', text: 'not stored in this browser' }),
+      ]),
+    );
+  });
+}
+
+/** A picture, full size, with the one action a stored file needs. */
+async function openAttachment(meta) {
+  const url = await attach.objectUrl(meta.id);
+  openSheet({
+    title: meta.name,
+    render: () => el('div', { class: 'att-view' }, [
+      url
+        ? el('img', { class: 'att-view-image', src: url, alt: meta.name })
+        : el('p', { class: 'group-note', text: 'This attachment is not stored in this browser.' }),
+      el('p', { class: 'group-note', text: attach.describe(meta) }),
+      url ? el('button', {
+        class: 'btn btn-secondary', type: 'button', text: 'Download',
+        onclick: () => saveAttachment(meta),
+      }) : null,
+    ]),
+  });
+}
+
+async function saveAttachment(meta) {
+  const blob = await attach.blobFor(meta.id);
+  if (!blob) { toast('That attachment is no longer stored in this browser', 'err'); return; }
+  downloadBlob(meta.name, blob);
+}
+
 /** What the model actually said. Ask blocks and tool calls are protocol, not
     prose, so they are not part of it. */
 const visibleText = content => splitAskBlocks(content)
@@ -1050,7 +1266,9 @@ function worthShowing(msg) {
   if (!msg) return false;
   if (msg.pending || msg.error || msg.reasoning) return true;
   if (msg.role === 'tool') return true;              // the card is the content
-  if (msg.role === 'user') return Boolean(String(msg.content || '').trim());
+  if (msg.role === 'user') {
+    return Boolean(String(msg.content || '').trim() || msg.attachments?.length);
+  }
   return Boolean(visibleText(msg.content));
 }
 
@@ -1159,18 +1377,29 @@ function scrollToBottom() {
 const nextSeq = () =>
   state.messages.length ? Math.max(...state.messages.map(m => m.seq || 0)) + 1 : 0;
 
-function historyForRequest() {
-  const usable = state.messages.filter(m => !m.error && m.content && m.role !== 'system');
+/** A tool answer reads to the provider as a user-side note in the
+    conversation; every provider understands that shape. */
+const toolTurn = m => (m.pageWrite
+  ? { role: 'user', content: `[The write tool ran:]\n${m.content}` }
+  : m.mcpTool
+    ? { role: 'user', content: `[The ${m.mcpServer} tool "${m.mcpTool}" ` +
+        (m.mcpError ? 'failed and answered' : 'was called and returned') + `:]\n${m.content}` }
+    : { role: 'user', content: `[The ${m.agent || 'agent'} was asked separately and answered:]\n${m.content}` });
+
+/* Asynchronous because a message with attachments has to have them read back
+   out of IndexedDB and encoded. One with nothing attached still comes out as
+   the plain { role, content } string it always was. */
+async function historyForRequest() {
+  const usable = state.messages.filter(m =>
+    !m.error && (m.content || m.attachments?.length) && m.role !== 'system');
   const limit = agentOf(state.conv)?.historyLimit ?? state.conv?.historyLimit;
   const slice = limit > 0 ? usable.slice(-limit) : usable;
-  // A tool answer reads to the provider as a user-side note in the
-  // conversation; every provider understands that shape.
-  return slice.map(m => m.role === 'tool'
-    ? m.mcpTool
-      ? { role: 'user', content: `[The ${m.mcpServer} tool "${m.mcpTool}" ` +
-          (m.mcpError ? 'failed and answered' : 'was called and returned') + `:]\n${m.content}` }
-      : { role: 'user', content: `[The ${m.agent || 'agent'} was asked separately and answered:]\n${m.content}` }
-    : { role: m.role, content: m.content });
+
+  const turns = [];
+  for (const m of slice) {
+    turns.push(m.role === 'tool' ? toolTurn(m) : { role: m.role, content: await attach.contentFor(m) });
+  }
+  return turns;
 }
 
 async function handleSubmit(ev) {
@@ -1180,7 +1409,7 @@ async function handleSubmit(ev) {
   if (state.shared) return;
   if (state.streaming?.convId === state.conv?.id) return;
   const text = dom.input.value.trim();
-  if (!text) return;
+  if (!text && !state.attachments.length) return;
 
   const provider = currentProvider();
   if (!provider) { openSettings(shell); return; }
@@ -1194,12 +1423,20 @@ async function handleSubmit(ev) {
   const { encrypted, unlocked } = vault.status();
   if (encrypted && !unlocked) { askUnlock(); return; }
 
+  // Taken out of the tray before anything can await: what is being sent is
+  // fixed at the moment Send was pressed, whatever is dropped in next.
+  const files = state.attachments;
+  state.attachments = [];
   dom.input.value = '';
   autosize(dom.input);
+  renderAttachTray();
   updateSendState();
 
   if (state.conv.draft) {
-    state.conv.title = text.replace(/\s+/g, ' ').slice(0, 60) || 'Untitled';
+    // A message that is only a picture still has to be called something, and
+    // the file's own name is the only thing in it worth using.
+    const title = text || files[0]?.name || '';
+    state.conv.title = title.replace(/\s+/g, ' ').slice(0, 60) || 'Untitled';
     state.conv.providerId = provider.id;
     await persistConversation();
   }
@@ -1208,18 +1445,127 @@ async function handleSubmit(ev) {
   // carries the same. Switching model later leaves both alone.
   const msg = store.newMessage(state.conv.id, 'user', text, nextSeq(), {
     model, providerId: provider.id, agentId: agent?.id ?? null,
+    ...(files.length ? { attachments: files.map(attach.summarize) } : {}),
   });
   state.messages.push(msg);
   await store.putMessage(msg);
+  if (files.length) {
+    try {
+      await attach.persist(files, { convId: state.conv.id, msgId: msg.id });
+    } catch (err) {
+      // Out of quota, most likely. The message still stands; it just goes
+      // without the files, and says so rather than referring to bytes that
+      // were never written.
+      delete msg.attachments;
+      await store.putMessage(msg);
+      toast(`Could not store the attachments: ${err.message || err}`, 'err', 8000);
+    }
+  }
+  for (const id of files.map(f => f.id)) releaseDraftUrl(id);
   appendMessage(msg);
   renderHeader();
 
   await runCompletion();
 }
 
+/* ── page tools ────────────────────────────────────────────
+
+   What a click on a page turns into: a fresh chat, with a question already in
+   it, aimed at an agent. Fresh rather than the chat on screen because the two
+   have nothing to do with each other — a selection from a page is a new
+   subject, and appending it to whatever was being discussed reads as a non
+   sequitur to the reader and to the model both.
+
+   Every action lands in handleSubmit, so a request from a page goes through
+   exactly the same path as a question typed into the composer: the same locked
+   -vault check, the same titling, the same persistence, the same stream. */
+
+/** The language Translate aims at: what the person set, else the one their
+    browser is in, said in that language's own name. */
+function translateTarget() {
+  return String(state.ui.pageToolsLang || '').trim() || pageTools.defaultLanguage();
+}
+
+/** Selected text, fenced so the model can tell the passage from the request
+    about it however the passage is punctuated. */
+const quoted = text => `--- selected text ---\n${text}\n--- end of selected text ---`;
+
+/** Where the selection came from, for a model that may need to know. */
+const source = page => (page?.title || page?.url)
+  ? `From ${[page.title, page.url].filter(Boolean).join(' — ')}.\n\n`
+  : '';
+
+async function handlePageAction(request) {
+  const { action, text = '', prompt = '', agentId, page, field } = request;
+
+  if (!state.agents.length) {
+    toast('Set up an agent first, then try again', 'err', 6000);
+    openSettings(shell);
+    return;
+  }
+  // The page offers a picker but does not require one; a null means whichever
+  // agent this app is already on, which is what the bar's plain buttons send.
+  const agent = (agentId && agentById(agentId))
+    || state.agents.find(a => a.id === state.ui.lastAgentId)
+    || state.agents[0];
+
+  const message = {
+    summarize: () => `${source(page)}Summarize the selected text below.\n\n${quoted(text)}`,
+    translate: () => `${source(page)}Translate the selected text below into ${translateTarget()}. ` +
+      `Reply with the translation and nothing else.\n\n${quoted(text)}`,
+    ask: () => `${source(page)}${prompt}\n\n${quoted(text)}`,
+    // The field's label, contents and page are in the system prompt the write
+    // tool comes with, so the message is the instruction and nothing else.
+    write: () => prompt,
+  }[action]?.();
+  if (!message?.trim()) return;
+
+  // Settings or the chat list may be open over the chat; a request from a
+  // page has just brought this panel to the front, and what it brought it to
+  // the front for should be what is on it.
+  closeSheet();
+  closeDrawer();
+  startDraft();
+
+  // The chat is the agent the page named, which need not be the one this app
+  // was last using — and deliberately does not become it: a one-off ask should
+  // not redirect the next thing typed into the composer.
+  if (agent && agent.id !== state.conv.agentId) {
+    Object.assign(state.conv, {
+      agentId: agent.id, providerId: agent.providerId, model: agent.model,
+    });
+    updateChip();
+  }
+
+  /* The field travels with the conversation, not with this call: the write
+     happens rounds later, possibly after the user has looked at another chat
+     and come back, and it has to reach the field it was asked about rather
+     than whatever is focused by then. */
+  if (field && request.tabId !== null && request.tabId !== undefined) {
+    state.conv.pageField = {
+      tabId: request.tabId,
+      frameId: request.frameId ?? 0,
+      fieldId: field.id,
+      label: field.label || '',
+      value: field.value || '',
+      multiline: Boolean(field.multiline),
+      pageTitle: page?.title || '',
+    };
+  }
+
+  dom.input.value = message;
+  autosize(dom.input);
+  updateSendState();
+  await handleSubmit();
+}
+
 async function runCompletion() {
   const convId = state.conv.id;
   const agent = agentOf(state.conv);
+  /* The page field this chat was started from, if it was. Read once, here:
+     the rounds below run long after the user may have switched chats, and the
+     write has to go back to the field this conversation is about. */
+  const pageField = state.conv.pageField || null;
   const provider = agent ? (providerById(agent.providerId) || currentProvider()) : currentProvider();
   const model = nextModel(provider) || provider?.defaultModel || '';
 
@@ -1262,6 +1608,7 @@ async function runCompletion() {
   try {
     let ran = 0;       // agent delegations so far in this reply
     let ranMcp = 0;    // MCP tool calls so far in this reply
+    let ranWrite = 0;  // writes into the page field so far in this reply
     for (;;) {
       const assistant = store.newMessage(convId, 'assistant', '', nextSeq(), {
         model, providerId: provider.id, agentId: agent?.id ?? null, pending: true,
@@ -1280,8 +1627,12 @@ async function runCompletion() {
         system: (agent
           ? (agent.systemPrompt || '')
           : (state.conv.systemPrompt || state.defaults.systemPrompt || ''))
-          + toolsPrompt(agent) + (agent?.tools === false ? '' : toolSection),
-        messages: historyForRequest(),
+          + toolsPrompt(agent) + (agent?.tools === false ? '' : toolSection)
+          // Offered whether or not the agent has tools: the person asked for
+          // this chat by clicking "Write with agent" on the field itself, and
+          // an agent that cannot answer that is no use to them here.
+          + pageTools.promptSection(pageField),
+        messages: await historyForRequest(),
         temperature: agent ? agent.temperature : state.conv.temperature,
         maxTokens: agent ? agent.maxTokens : state.conv.maxTokens,
         signal: controller.signal,
@@ -1306,21 +1657,24 @@ async function runCompletion() {
         if (state.pinned) scrollToBottom();
       }
 
-      // Tools: the reply may delegate questions to agent threads and call MCP
-      // tools; the next round sees the answers through historyForRequest. The
-      // reply is done when a round produces neither.
-      if (agent?.tools === false) break;
-      const askList = askCalls(assistant.content).slice(0, MAX_TOOL_ROUNDS - ran);
-      const toolList = mcpCalls(assistant.content).slice(0, MAX_MCP_ROUNDS - ranMcp);
-      if (!askList.length && !toolList.length) break;
-      if (askList.length || toolList.length) {
-        ran += askList.length;
-        ranMcp += toolList.length;
-        // The round's visible text is protocol fragments around the blocks;
-        // without this it would read as an empty reply.
-        assistant.intermediate = true;
-        await store.putMessage(assistant);
-      }
+      // Tools: the reply may delegate questions to agent threads, call MCP
+      // tools, and write into the page field this chat was started from; the
+      // next round sees each answer through historyForRequest. The reply is
+      // done when a round produces none of them.
+      const off = agent?.tools === false;
+      const askList = off ? [] : askCalls(assistant.content).slice(0, MAX_TOOL_ROUNDS - ran);
+      const toolList = off ? [] : mcpCalls(assistant.content).slice(0, MAX_MCP_ROUNDS - ranMcp);
+      const writeList = pageField
+        ? pageTools.writeCalls(assistant.content).slice(0, MAX_WRITE_ROUNDS - ranWrite)
+        : [];
+      if (!askList.length && !toolList.length && !writeList.length) break;
+      ran += askList.length;
+      ranMcp += toolList.length;
+      ranWrite += writeList.length;
+      // The round's visible text is protocol fragments around the blocks;
+      // without this it would read as an empty reply.
+      assistant.intermediate = true;
+      await store.putMessage(assistant);
 
       for (const call of askList) {
         const run = await executeAskTool(call, controller, convId);   // AbortError escapes
@@ -1341,6 +1695,19 @@ async function runCompletion() {
           run.answer || '(The tool returned no content.)', nextSeq(), {
           mcpServer: run.server, mcpTool: run.tool, mcpArgs: run.prompt,
           mcpError: run.error,
+        });
+        state.messages.push(toolMsg);
+        if (state.conv?.id === convId) appendMessage(toolMsg);
+        await store.putMessage(toolMsg);
+      }
+      for (const call of writeList) {
+        const run = await pageTools.executeWriteTool(call, pageField);
+        // The card keeps the text that was sent, because the field it went
+        // into is on a page the chat cannot show — this is the only record of
+        // what was actually put there.
+        const toolMsg = store.newMessage(convId, 'tool', run.answer, nextSeq(), {
+          pageWrite: true, pageLabel: pageField.label || '', pageText: run.text,
+          pageError: !run.ok,
         });
         state.messages.push(toolMsg);
         if (state.conv?.id === convId) appendMessage(toolMsg);
@@ -1388,7 +1755,7 @@ function setBusy(busy) {
 }
 
 function updateSendState() {
-  dom.send.disabled = !dom.input.value.trim();
+  dom.send.disabled = !dom.input.value.trim() && !state.attachments.length;
 }
 
 function stopStreaming() {
@@ -1979,7 +2346,15 @@ async function duplicateChat() {
   delete copy.draft;
   delete copy.archived;          // a copy starts fresh in the main list
   await store.putConversation(copy);
-  for (const m of state.messages) await store.putMessage({ ...m, id: store.uid(), convId: copy.id });
+  for (const m of state.messages) {
+    const id = store.uid();
+    // Fresh attachment records too: deleting either chat must leave the other
+    // one whole, and both point at bytes of their own.
+    const attachments = m.attachments?.length
+      ? await attach.copyTo(m.attachments, { convId: copy.id, msgId: id })
+      : null;
+    await store.putMessage({ ...m, id, convId: copy.id, ...(attachments ? { attachments } : {}) });
+  }
   await refreshConversations();
   await openConversation(copy.id);
   closeSheet();
@@ -1989,25 +2364,48 @@ async function duplicateChat() {
 const slug = s => (s || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-')
   .replace(/^-|-$/g, '').slice(0, 48) || 'chat';
 
-function exportChat(kind) {
+async function exportChat(kind) {
   if (kind === 'json') {
-    const { draft, ...conv } = state.conv;
+    // A page field cannot survive the trip — a tab id means nothing to the
+    // browser that reads this back — so it is not written down as if it could.
+    const { draft, pageField, ...conv } = state.conv;
+    // Attachments ride along base64-encoded, which is what makes a chat with
+    // pictures in it a large file. A backup that left them behind would not
+    // be one.
+    const attachments = await attach.exportRecords(state.messages);
     downloadJSON(`${slug(conv.title)}.json`, {
       app: 'ivx-ai-chat', version: 1, exportedAt: new Date().toISOString(),
       conversation: conv, messages: state.messages,
+      ...(attachments.length ? { attachments } : {}),
     });
   } else {
     const lines = [`# ${state.conv.title || 'Chat'}`, ''];
     for (const m of state.messages) {
       const who = m.role === 'user' ? 'You'
-        : m.role === 'tool' ? `Asked ${m.agent || 'another agent'}`
+        : m.role === 'tool' ? toolHeading(m)
         : 'Assistant';
-      lines.push(`## ${who}`, '', (m.role === 'tool' ? (m.answer || m.content) : m.content) || '', '');
+      lines.push(`## ${who}`, '', (m.role === 'tool' ? toolBody(m) : m.content) || '', '');
+      // Markdown has nowhere to put the file itself, so it gets named.
+      if (m.attachments?.length) lines.push(attach.exportLine(m.attachments), '');
     }
     downloadBlob(`${slug(state.conv.title)}.md`, new Blob([lines.join('\n')], { type: 'text/markdown' }));
   }
   closeSheet();
 }
+
+/** What a tool round is called in an export. On screen the card says which
+    tool ran; a markdown file has only a heading to say it in. */
+const toolHeading = m => (m.pageWrite
+  ? `Wrote into ${m.pageLabel ? `“${m.pageLabel}”` : 'a page field'}`
+  : m.mcpTool
+    ? `Used ${m.mcpServer} · ${m.mcpTool}`
+    : `Asked ${m.agent || 'another agent'}`);
+
+/** And what it produced. A write's record is the text that went into the
+    field, which is on a page the export cannot include. */
+const toolBody = m => (m.pageWrite
+  ? [m.pageText, m.content].filter(Boolean).join('\n\n')
+  : m.answer || m.content);
 
 /* ── share links ───────────────────────────────────────────── */
 
@@ -2019,21 +2417,28 @@ async function openShare() {
   // A reply still being written is not part of the chat yet — leaving it out
   // keeps "what the link says" and "what the chat says" the same thing.
   const messages = state.messages.filter(m => !m.pending);
+  // A chat has to fit inside a URL, so attachments do not travel in one. The
+  // names stay — the recipient sees what was attached, and each card says the
+  // link could not carry it — but the bytes are left at home.
+  const withFiles = messages.some(m => m.attachments?.length);
   // The link's base: what the user configured, else this very page. Resolving
   // it here (not in buildLink) so the local-instance warning sees the truth.
   const base = shareBaseUrl() || `${location.origin}${location.pathname}`;
   let url;
   try {
-    const { draft, ...conv } = state.conv;
+    // pageField goes with draft, and for a stronger reason: it names a tab in
+    // this browser, which is nothing to whoever opens the link, and it carries
+    // what was in a form field at the time, which is nobody else's.
+    const { draft, pageField, ...conv } = state.conv;
     url = await share.buildLink({ conversation: conv, messages, baseUrl: shareBaseUrl() });
   } catch (err) {
     toast(err.message || 'Could not build the share link', 'err');
     return;
   }
-  pushScreen({ title: 'Share link', render: () => shareScreen(url, base) });
+  pushScreen({ title: 'Share link', render: () => shareScreen(url, base, withFiles) });
 }
 
-function shareScreen(url, base) {
+function shareScreen(url, base, withFiles = false) {
   const kb = Math.round(url.length / 102.4) / 10;
   // is.gd — the most permissive shortener here — draws the line at 5,000
   // characters; past that the automatic shortening cannot work at all.
@@ -2089,6 +2494,12 @@ function shareScreen(url, base) {
   return el('div', {}, [
     el('p', { class: 'group-note', text: 'The whole conversation is zipped and encoded into this link. The app uploads nothing — but anyone who has the link, including a shortener, can read the chat.' }),
     localNote,
+    withFiles
+      ? el('p', { class: 'group-note warn', text:
+          'Attachments are not in this link — a picture or a video would not fit ' +
+          'in a URL. The recipient sees what was attached and that it was left ' +
+          'behind; export the chat as a file to send the files themselves.' })
+      : null,
     el('div', { class: 'field' }, [
       el('textarea', { class: 'form-control', rows: 4, readOnly: true, value: url,
                       'aria-label': 'Share link', onclick: ev => ev.target.select() }),
@@ -2332,10 +2743,65 @@ function debounce(fn, ms) {
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
+/* Dropping a file anywhere over the chat attaches it. The counter is what
+   makes the highlight behave: dragging across a child element fires a leave
+   for the parent before the enter for the child, so a plain boolean flickers
+   the whole way across the pane. */
+function bindDropZone() {
+  const zone = $('.main');
+  let depth = 0;
+  const carriesFiles = ev => [...(ev.dataTransfer?.types || [])].includes('Files');
+  const reset = () => { depth = 0; zone.classList.remove('is-dropping'); };
+
+  zone.addEventListener('dragenter', ev => {
+    if (!carriesFiles(ev) || state.shared) return;
+    ev.preventDefault();
+    depth += 1;
+    zone.classList.add('is-dropping');
+  });
+  zone.addEventListener('dragover', ev => {
+    if (!carriesFiles(ev) || state.shared) return;
+    ev.preventDefault();                       // without this the drop never fires
+    ev.dataTransfer.dropEffect = 'copy';
+  });
+  zone.addEventListener('dragleave', () => { depth = Math.max(0, depth - 1); if (!depth) reset(); });
+  zone.addEventListener('drop', ev => {
+    if (!carriesFiles(ev) || state.shared) return;
+    ev.preventDefault();
+    reset();
+    addFiles(ev.dataTransfer.files);
+  });
+
+  // A file dropped anywhere else would otherwise replace the app with itself.
+  for (const type of ['dragover', 'drop']) {
+    window.addEventListener(type, ev => {
+      if (carriesFiles(ev) && !zone.contains(ev.target)) ev.preventDefault();
+    });
+  }
+}
+
 function bindEvents() {
   $('#composer').addEventListener('submit', handleSubmit);
   dom.stop.addEventListener('click', stopStreaming);
   $('#btnAddShared').addEventListener('click', addSharedChat);
+
+  $('#btnAttach').addEventListener('click', () => dom.fileInput.click());
+  dom.fileInput.addEventListener('change', async () => {
+    await addFiles(dom.fileInput.files);
+    // Cleared so picking the same file twice in a row still fires a change.
+    dom.fileInput.value = '';
+  });
+
+  // A screenshot on the clipboard is the commonest attachment there is, and
+  // the default paste would drop its file name into the textarea instead.
+  dom.input.addEventListener('paste', ev => {
+    const files = [...(ev.clipboardData?.files || [])];
+    if (!files.length) return;
+    ev.preventDefault();
+    addFiles(files);
+  });
+
+  bindDropZone();
 
   dom.input.addEventListener('input', () => { autosize(dom.input); updateSendState(); });
   dom.input.addEventListener('keydown', ev => {
@@ -2364,7 +2830,9 @@ function bindEvents() {
     if (q.length >= 2) {
       const all = await store.allMessages();
       state.searchHits = new Set(
-        all.filter(m => (m.content || '').toLowerCase().includes(q)).map(m => m.convId)
+        all.filter(m => (m.content || '').toLowerCase().includes(q)
+          || (m.attachments || []).some(a => a.name.toLowerCase().includes(q)))
+          .map(m => m.convId)
       );
     }
     renderConvList();

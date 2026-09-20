@@ -56,12 +56,17 @@ Step-by-step setup for each: [ai.ivx.run/docs](https://ai.ivx.run/docs/).
   MCP server you add.
 - **The Store.** Ready-made services, agents, tools and skills you can install
   in a tap.
+- **Attachments.** Pick, paste or drop pictures, video, audio and files into a
+  message. They stay in this browser like everything else. Pictures go to the
+  model as pictures, text files go as their text, and anything a model cannot
+  read is named in the prompt rather than passed off as readable.
 - **Settings per chat.** Its own prompt, creativity, length limit and how much
   history to send.
 - **Fix and retry.** Edit any message and run the conversation again from there.
 - **Share a chat** with a link that carries the conversation inside it, so no
   server ever holds a copy.
-- **Export** one chat as a file, or everything at once as a backup.
+- **Export** one chat as a file, or everything at once as a backup —
+  attachments included.
 - **Search** your chats.
 - **Works offline** once installed, if the model is on your own computer.
 - **Erase everything** in one go.

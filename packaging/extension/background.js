@@ -179,3 +179,242 @@ api.action.onClicked.addListener(async () => {
 api.tabs.onRemoved.addListener(id => {
   if (id === openTabId) openTabId = null;
 });
+
+/* ── page tools ────────────────────────────────────────────────
+
+   Select text on a page and a small bar offers to summarize it, translate it
+   or put a question about it to an agent; focus a text field and a chip offers
+   to write into it. content.js is what draws those; this is what carries them
+   to the app and the app's answer back.
+
+   The part worth reading twice is that content.js is *not* in the manifest.
+   A content script declared there comes with host permissions declared there,
+   and for a tool that could be used on any site that reads, on install, as
+   "read and change all your data on all websites" — the sentence this
+   extension has gone to some length not to say, and does not mean: page tools
+   are off until a person turns them on, and reach one site at a time after
+   that. So the script is registered at runtime for the sites they allowed,
+   which is a permission the browser asks about at the moment there is a site
+   to name. See web/src/page-tools.js for the end that asks.
+
+   Three hops, because none of the three parties can reach the others:
+
+     page → here   a click in content.js, which is also the user gesture that
+                   lets the panel be opened at all.
+     here → app    the request is queued and the app is nudged. Queued rather
+                   than sent, because the click that opens the panel is also
+                   the click whose request it carries, and the panel is not
+                   loaded yet; the app claims the queue when it boots and on
+                   every nudge after.
+     app → page    one message, `ivx:page-write`, carrying the text a `<write>`
+                   tool call produced. The app never writes what the model
+                   *said* — only what it asked for through the tool. */
+
+const SITES_KEY = 'ivx:page-sites';    // match patterns page tools may run on
+const AGENTS_KEY = 'ivx:agents';       // names for content.js's agent picker
+const QUEUE_KEY = 'ivx:page-queue';    // requests the app has not claimed yet
+const SCRIPT_ID = 'ivx-page-tools';
+
+/* Session storage where there is one: a queued request is about a click that
+   just happened and means nothing tomorrow. Not every browser this ships to
+   has it, and `local` holds the site list and the agent names in either case —
+   those are settings, and are meant to outlive the session. */
+const session = api.storage?.session ?? api.storage?.local ?? null;
+const local = api.storage?.local ?? null;
+
+const read = async (store, key, fallback) => {
+  try {
+    return (await store?.get(key))?.[key] ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+/**
+ * Register content.js for the sites page tools are allowed on — and only for
+ * those.
+ *
+ * Called at every start (a registration does survive a worker restart, but a
+ * profile that has lost it is cheaper to fix than to diagnose), and again
+ * whenever the site list or the granted permissions change. The two have to
+ * agree: a pattern in the list without the permission behind it is refused by
+ * `registerContentScripts`, which would take the whole registration down with
+ * it, so what is granted is what is registered.
+ */
+async function syncPageTools() {
+  if (!api.scripting?.registerContentScripts) return;
+
+  const wanted = await read(local, SITES_KEY, []);
+  const allowed = [];
+  for (const pattern of wanted) {
+    try {
+      if (await api.permissions.contains({ origins: [pattern] })) allowed.push(pattern);
+    } catch {
+      /* a pattern the browser will not even consider; leave it out */
+    }
+  }
+
+  try {
+    const existing = await api.scripting.getRegisteredContentScripts({ ids: [SCRIPT_ID] });
+    if (existing.length) await api.scripting.unregisterContentScripts({ ids: [SCRIPT_ID] });
+  } catch {
+    /* nothing registered, which is the state the next lines want anyway */
+  }
+  if (!allowed.length) return;
+
+  try {
+    await api.scripting.registerContentScripts([{
+      id: SCRIPT_ID,
+      js: ['content.js'],
+      matches: allowed,
+      // An editor's field is as often in an iframe as in the page itself, and
+      // a selection belongs to one frame either way — so every frame gets the
+      // script and the frame that owns the thing is the one that reacts.
+      allFrames: true,
+      runAt: 'document_idle',
+      persistAcrossSessions: true,
+    }]);
+  } catch {
+    return;   // nothing registered; the app's settings screen says page tools are off
+  }
+
+  /* A registration only reaches pages loaded after it, which would mean
+     allowing a site and then having to reload the tab you allowed it for.
+     Injecting into what is already open closes that gap; content.js guards
+     against running twice in one frame, so a frame that raced the two and got
+     both is no worse off than one that got either. */
+  try {
+    for (const tab of await api.tabs.query({ url: allowed })) {
+      if (tab.id === undefined) continue;
+      api.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        files: ['content.js'],
+      }).catch(() => { /* a frame that refuses injection, or already has it */ });
+    }
+  } catch {
+    /* no tabs to look at */
+  }
+}
+
+syncPageTools();
+api.permissions.onAdded?.addListener(syncPageTools);
+api.permissions.onRemoved?.addListener(syncPageTools);
+api.storage?.onChanged?.addListener((changes, area) => {
+  if (area === 'local' && SITES_KEY in changes) syncPageTools();
+});
+
+/**
+ * Open the app, wherever this browser keeps it.
+ *
+ * The same three-way split as the toolbar click above, and for the same
+ * reasons — with one extra constraint: both panel APIs require a user gesture,
+ * and the gesture here is the click in the page that sent us this message. It
+ * survives exactly as long as nothing is awaited before the call, which is why
+ * this runs before the request is queued rather than after.
+ */
+function openApp(tabId) {
+  if (api.sidePanel?.open) {
+    return api.sidePanel.open(tabId === undefined ? {} : { tabId })
+      .catch(() => openTab());
+  }
+  if (api.sidebarAction?.open) {
+    return api.sidebarAction.open().catch(() => openTab());
+  }
+  return openTab();
+}
+
+async function openTab() {
+  if (await focusExisting()) return;
+  const tab = await api.tabs.create({ url: api.runtime.getURL('index.html') });
+  openTabId = tab.id;
+}
+
+/**
+ * One request from a page, on its way to the app.
+ *
+ * The tab and frame it came from travel with it, because a write has to go
+ * back to the very field it was asked about — and "the active tab" is not
+ * that: by the time the model has written anything the person may well be
+ * reading something else.
+ */
+async function queue(request, sender) {
+  const pending = await read(session, QUEUE_KEY, []);
+  pending.push({
+    ...request,
+    tabId: sender.tab?.id ?? null,
+    frameId: sender.frameId ?? 0,
+    at: Date.now(),
+  });
+  // A bound, so a panel that never opens cannot let this grow without end.
+  try { await session?.set({ [QUEUE_KEY]: pending.slice(-8) }); } catch { /* nothing to queue into */ }
+  // For a panel that is already open and will never boot again. Nothing is
+  // sent with it: the app claims the queue, which is what keeps one request
+  // from being acted on twice.
+  api.runtime.sendMessage({ type: 'ivx:page-nudge' }).catch(() => { /* nobody listening yet */ });
+}
+
+api.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  switch (message?.type) {
+    /* From a page: act on this. The panel opens first, synchronously, while
+       the click that asked for it still counts as a gesture. */
+    case 'ivx:page-action': {
+      const { type, ...request } = message;
+      openApp(sender.tab?.id);
+      queue(request, sender).then(() => sendResponse({ ok: true }));
+      return true;
+    }
+
+    /* From the app, at boot and at every nudge: what has come in. Claimed, not
+       read — whoever asks takes it, and a second asker gets nothing. */
+    case 'ivx:page-pending': {
+      read(session, QUEUE_KEY, [])
+        .then(async pending => {
+          try { await session?.remove(QUEUE_KEY); } catch { /* already gone */ }
+          sendResponse({ pending });
+        });
+      return true;
+    }
+
+    /* From the app: put this in that field, in the frame that offered it. */
+    case 'ivx:page-write': {
+      if (message.tabId === null || message.tabId === undefined) {
+        sendResponse({ ok: false, error: 'The page this was asked from is gone.' });
+        return false;
+      }
+      api.tabs.sendMessage(message.tabId, {
+        type: 'ivx:page-write',
+        fieldId: message.fieldId,
+        text: message.text,
+        mode: message.mode,
+      }, { frameId: message.frameId ?? 0 })
+        .then(result => sendResponse(result || { ok: false, error: 'The page did not answer.' }))
+        .catch(() => sendResponse({
+          ok: false,
+          error: 'That page is no longer listening — it may have been closed or reloaded.',
+        }));
+      return true;
+    }
+
+    /* From the app whenever its agents change: the names content.js offers in
+       its picker. Only names and ids — nothing about a provider, a model or a
+       key is ever put where a page could reach it. */
+    case 'ivx:agents': {
+      const agents = (message.agents || [])
+        .map(a => ({ id: String(a.id), name: String(a.name) }))
+        .slice(0, 100);
+      (local?.set({ [AGENTS_KEY]: agents }) ?? Promise.resolve())
+        .catch(() => { /* nothing to store into; the picker falls back */ })
+        .then(() => sendResponse({ ok: true }));
+      return true;
+    }
+
+    /* From a page: who can be asked. */
+    case 'ivx:page-agents': {
+      read(local, AGENTS_KEY, []).then(agents => sendResponse({ agents }));
+      return true;
+    }
+
+    default:
+      return false;
+  }
+});

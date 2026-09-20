@@ -66,6 +66,20 @@ const icons = Object.fromEntries(ICON_SIZES.map(s => [s, `icons/ext-${s}.png`]))
    gateway. None of those can be enumerated here, and an extension cannot
    widen this set later without every existing install being asked again. What
    is granted out of it stays one host at a time. */
+/* Page tools needs both of these, and neither shows a warning on install.
+
+   `scripting` is what lets background.js register content.js at runtime, for
+   the sites the person allowed and no others — which is the only reason this
+   extension can put a bar on a page without declaring a content script here,
+   and a declared content script is exactly the "read and change all your data
+   on all websites" sentence the paragraph above is about.
+
+   `storage` holds the three small things the page end needs and cannot ask
+   the app for: which sites are allowed, the agent names its picker offers,
+   and a request waiting for the panel to open. No chat, no key and no setting
+   of any other kind ever leaves IndexedDB. */
+const PAGE_TOOLS = ['scripting', 'storage'];
+
 const base = () => ({
   manifest_version: 3,
   name: brand.name,
@@ -97,7 +111,7 @@ const manifests = {
     // for why. The `WithHostAccess` spelling is the narrow one — it modifies
     // only requests to hosts already granted, which is exactly the reach this
     // extension has, and it asks for no warning of its own on install.
-    permissions: ['sidePanel', 'declarativeNetRequestWithHostAccess'],
+    permissions: ['sidePanel', 'declarativeNetRequestWithHostAccess', ...PAGE_TOOLS],
     side_panel: { default_path: 'index.html' },
     background: { service_worker: 'background.js' },
   }),
@@ -115,7 +129,7 @@ const manifests = {
     // Firefox has declarativeNetRequest but does not apply it to an
     // extension's own requests; blocking webRequest is what works here, and is
     // still supported under MV3.
-    permissions: ['webRequest', 'webRequestBlocking'],
+    permissions: ['webRequest', 'webRequestBlocking', ...PAGE_TOOLS],
     background: { scripts: ['background.js'] },
     /* `data_collection_permissions` is required of every new add-on since
        3 November 2025, and AMO rejects an upload without it. `none` is the
@@ -144,7 +158,7 @@ const manifests = {
      here no script can check, since Safari cannot be driven. */
   safari: () => ({
     ...base(),
-    permissions: ['declarativeNetRequestWithHostAccess'],
+    permissions: ['declarativeNetRequestWithHostAccess', ...PAGE_TOOLS],
     background: { service_worker: 'background.js' },
   }),
 };
@@ -208,6 +222,9 @@ function buildTarget(target) {
   trimForExtension(dir);
   renderIcons(dir);
   cpSync(join(SRC, 'background.js'), join(dir, 'background.js'));
+  /* Shipped as a file but not declared in the manifest: background.js
+     registers it for the sites the person allowed, and for nothing else. */
+  cpSync(join(SRC, 'content.js'), join(dir, 'content.js'));
   writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifests[target](), null, 2) + '\n');
 
   // Safari installs an app, not a zip: the converter in README.md turns this

@@ -12,9 +12,11 @@ import * as api from './providers.js';
 import * as bridge from './bridge.js';
 import * as access from './host-access.js';
 import * as mcp from './mcp.js';
+import * as pageTools from './page-tools.js';
 import * as registry from './registry.js';
 import * as market from './market.js';
 import * as usage from './usage.js';
+import * as attach from './attach.js';
 import { parseConfig } from './mcp-config.js';
 import {
   el, toast, openSheet, pushScreen, popScreen, closeSheet, refreshSheet, entityScreen,
@@ -200,6 +202,11 @@ function rootScreen() {
         sub: storeSourcesLine(),
         onclick: () => pushScreen({ title: 'Store', render: storeScreen }),
       }),
+      pageTools.AVAILABLE ? navRow('Page tools', {
+        sub: pageToolsLine(),
+        dot: pageTools.sites().length > 0,
+        onclick: () => pushScreen({ title: 'Page tools', render: pageToolsScreen }),
+      }) : null,
       navRow('Sharing', {
         sub: app.getUI().shareBaseUrl
           ? String(app.getUI().shareBaseUrl).trim().replace(/\/+$/, '')
@@ -273,6 +280,112 @@ function providersScreen() {
 
     group(null, [
       actionRow('Add a provider', { onclick: addProvider }),
+    ]),
+  ]);
+}
+
+/* ── page tools ────────────────────────────────────────────── */
+
+/* Selecting text on a page offers to summarize it, translate it or put a
+   question about it to an agent; focusing a text field offers to write into
+   it. None of that runs anywhere until a site is named here.
+
+   Which is the whole screen, really. The extension asks for nothing on
+   install, and what it can reach afterwards is this list — one host at a time,
+   granted by the browser's own prompt on the click that names it, and given
+   back the moment the row goes. See web/src/page-tools.js and the note in
+   packaging/extension/background.js for what happens in between. */
+
+/** A match pattern as a person would say it. */
+const siteName = pattern => (pattern === pageTools.EVERY_SITE
+  ? 'Every site'
+  : pattern.replace(/^https?:\/\//, '').replace(/\/\*$/, ''));
+
+function pageToolsLine() {
+  const allowed = pageTools.sites();
+  if (!allowed.length) return 'Off — no sites allowed';
+  if (allowed.includes(pageTools.EVERY_SITE)) return 'On for every site';
+  return allowed.length === 1 ? `On for ${siteName(allowed[0])}` : `On for ${allowed.length} sites`;
+}
+
+function pageToolsScreen() {
+  const allowed = pageTools.sites();
+  const everywhere = allowed.includes(pageTools.EVERY_SITE);
+
+  const lang = el('input', {
+    class: 'form-control', type: 'text', value: app.getUI().pageToolsLang || '',
+    placeholder: pageTools.defaultLanguage(), spellcheck: 'false',
+    onchange: ev => {
+      app.setUI({ pageToolsLang: ev.target.value.trim() });
+      refreshSheet();
+    },
+  });
+
+  return el('div', {}, [
+    group('Runs on', [
+      ...allowed.map(pattern => actionRow(siteName(pattern), {
+        sub: 'Tap to stop running here',
+        onclick: () => pageTools.forget(pattern).then(refreshSheet),
+      })),
+      !allowed.length ? actionRow('No sites yet', {}) : null,
+      !everywhere ? actionRow('Allow a site…', {
+        sub: 'One host, and every page on it',
+        onclick: () => pushScreen({ title: 'Allow a site', render: allowSiteScreen }),
+      }) : null,
+      !everywhere ? actionRow('Allow every site', {
+        sub: 'The browser will say what that means before you agree',
+        // Straight out of the click, with nothing awaited first: the
+        // permission prompt needs the gesture, and an await loses it.
+        onclick: () => pageTools.allow(pageTools.EVERY_SITE).then(ok => {
+          toast(ok ? 'Page tools are on everywhere' : 'Not allowed', ok ? 'ok' : 'err');
+          refreshSheet();
+        }),
+      }) : null,
+    ], allowed.length
+      ? 'The bar appears on these sites and nowhere else. Removing a site gives ' +
+        'the permission back to the browser.'
+      : 'Page tools are off. Until a site is allowed, this extension cannot see ' +
+        'any page you visit — and that is what the browser told you on install.'),
+
+    group('Translate into', [
+      el('div', { class: 'item' }, [
+        el('div', { class: 'field w-100' }, [lang]),
+      ]),
+    ], 'What the Translate button asks for. Any language, written however you ' +
+       'would write it to a person; empty follows this browser.'),
+  ]);
+}
+
+/** Typing the host and allowing it are one screen, because they have to be
+    one click: the browser's permission prompt needs the gesture, and a prompt
+    for the host first would have spent it. */
+function allowSiteScreen() {
+  const host = el('input', {
+    class: 'form-control', type: 'text', placeholder: 'example.com',
+    spellcheck: 'false', autocapitalize: 'off', autocorrect: 'off',
+  });
+
+  const allow = () => {
+    const pattern = pageTools.patternFor(host.value);
+    if (!pattern) { toast('That is not a site address', 'err'); return; }
+    pageTools.allow(pattern).then(ok => {
+      toast(ok ? `Page tools are on for ${siteName(pattern)}` : 'Not allowed',
+        ok ? 'ok' : 'err');
+      if (ok) popScreen();
+      else refreshSheet();
+    });
+  };
+
+  return el('div', {}, [
+    group(null, [
+      el('div', { class: 'item' }, [el('div', { class: 'field w-100' }, [host])]),
+    ], 'A host covers every page and every port on it — a browser permission ' +
+       'cannot be narrower than that.'),
+    el('div', { class: 'sheet-actions' }, [
+      el('button', {
+        class: 'btn btn-primary btn-block', type: 'button', text: 'Allow this site',
+        onclick: allow,
+      }),
     ]),
   ]);
 }
@@ -1386,12 +1499,18 @@ async function exportAll(withKeys) {
       kv.push({ key: 'secrets', value: vault.exportSecrets() });
     } catch (err) { toast(err.message, 'err'); return; }
   }
+  const messages = await store.allMessages();
+  // Attachments are base64 inside the same file. It makes a backup with
+  // pictures in it a big file, and a backup that dropped them would be a
+  // backup of half the chat.
+  const attachments = await attach.exportRecords(messages);
   downloadJSON(`ivx-ai-chat-backup-${new Date().toISOString().slice(0, 10)}.json`, {
     app: 'ivx-ai-chat', version: 1, exportedAt: new Date().toISOString(),
     containsKeys: withKeys,
     conversations: await store.listConversations(),
-    messages: await store.allMessages(),
+    messages,
     kv,
+    ...(attachments.length ? { attachments } : {}),
   });
   toast(withKeys ? 'Exported — this file contains your API keys' : 'Exported', 'ok', 7000);
 }
@@ -1415,9 +1534,11 @@ function importBackup() {
       toast('Nothing recognisable in that file', 'err');
       return;
     }
+    const attachments = attach.restoreRecords(bundle.attachments);
     const ok = await confirmAction({
       title: 'Import this backup?',
       body: `${conversations.length} chats and ${messages.length} messages will be merged in.` +
+        (attachments.length ? ` ${attachments.length} attachments come with them.` : '') +
         (bundle.containsKeys ? ' It also contains API keys.' : ''),
       okText: 'Import',
       danger: false,
@@ -1426,7 +1547,7 @@ function importBackup() {
 
     const secrets = (bundle.kv || []).find(r => r.key === 'secrets')?.value;
     const kv = (bundle.kv || []).filter(r => r.key !== 'secrets' && r.key !== 'vault');
-    await store.importBundle({ conversations, messages, kv });
+    await store.importBundle({ conversations, messages, kv, attachments });
     if (secrets && typeof secrets === 'object') {
       try { await vault.importSecrets(secrets); } catch (err) { toast(err.message, 'err'); }
     }

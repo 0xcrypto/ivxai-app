@@ -242,6 +242,76 @@ function headersFor(provider, apiKey) {
   return h;
 }
 
+/* ── message content ───────────────────────────────────────── */
+
+/* A message's `content` is either a plain string — which is every chat that
+   has never attached anything, and the shape this file spoke for its whole
+   life — or the list of neutral parts attach.js builds for one that has:
+
+     { type: 'text', text }
+     { type: 'image', mediaType, data }        // base64, no data: prefix
+     { type: 'document', mediaType, data, name }
+
+   Each provider spells those differently, and some cannot carry them at all.
+   A part that cannot travel is replaced by a sentence saying so, never
+   dropped: a model answering about a picture it was never shown, with no hint
+   that it was not shown it, is the one outcome worth engineering against. */
+
+const dataUrl = part => `data:${part.mediaType || 'application/octet-stream'};base64,${part.data}`;
+
+const undelivered = part =>
+  `[The ${part.type} “${part.name || 'attachment'}” could not be sent to this ` +
+  'provider, which accepts text only. Answer about it only from what the ' +
+  'conversation says, and say plainly that you cannot see it.]';
+
+/** OpenAI-compatible, and WebLLM, which speaks the same shape. */
+function openaiParts(parts, { files }) {
+  return parts.map(part => {
+    if (part.type === 'image') return { type: 'image_url', image_url: { url: dataUrl(part) } };
+    if (part.type === 'document') {
+      // The documented shape for a PDF on /chat/completions. WebLLM has no
+      // equivalent, and neither do most compatible servers.
+      return files
+        ? { type: 'file', file: { filename: part.name || 'document.pdf', file_data: dataUrl(part) } }
+        : { type: 'text', text: undelivered(part) };
+    }
+    return { type: 'text', text: part.text || '' };
+  });
+}
+
+function anthropicParts(parts) {
+  return parts.map(part => (
+    part.type === 'image' || part.type === 'document'
+      ? { type: part.type, source: { type: 'base64', media_type: part.mediaType, data: part.data } }
+      : { type: 'text', text: part.text || '' }
+  ));
+}
+
+/** Ollama keeps pictures out of the content: the text is a string, and the
+    images ride alongside it as bare base64. */
+function ollamaMessage(role, parts) {
+  const images = [];
+  const text = [];
+  for (const part of parts) {
+    if (part.type === 'image') images.push(part.data);
+    else if (part.type === 'document') text.push(undelivered(part));
+    else if (part.text) text.push(part.text);
+  }
+  return { role, content: text.join('\n\n'), ...(images.length ? { images } : {}) };
+}
+
+/** Put a conversation into the shape one provider reads. Plain-string
+    messages pass through untouched, so nothing changes for a chat with
+    nothing attached. */
+function shapeMessages(kind, messages) {
+  return messages.map(m => {
+    if (!Array.isArray(m.content)) return m;
+    if (kind === 'ollama') return ollamaMessage(m.role, m.content);
+    if (kind === 'anthropic') return { ...m, content: anthropicParts(m.content) };
+    return { ...m, content: openaiParts(m.content, { files: kind === 'openai' }) };
+  });
+}
+
 /* ── streaming helpers ─────────────────────────────────────── */
 
 async function* lines(response, signal) {
@@ -387,8 +457,9 @@ async function streamWebLLM({ model, system, messages, temperature, maxTokens, s
     // visible here; without this check the load would finish and generate
     // into a chat the user already left.
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    const shaped = shapeMessages('webllm', messages);
     const chunks = await engine.chat.completions.create({
-      messages: system ? [{ role: 'system', content: system }, ...messages] : messages,
+      messages: system ? [{ role: 'system', content: system }, ...shaped] : shaped,
       stream: true,
       stream_options: { include_usage: true },
       ...(temperature != null ? { temperature } : {}),
@@ -467,11 +538,12 @@ export async function streamChat({ provider, apiKey, model, system, messages, te
   }
 
   let url, body;
+  const shaped = shapeMessages(provider.kind, messages);
   if (provider.kind === 'ollama') {
     url = `${base}/api/chat`;
     body = {
       model, stream: true,
-      messages: system ? [{ role: 'system', content: system }, ...messages] : messages,
+      messages: system ? [{ role: 'system', content: system }, ...shaped] : shaped,
       options: {
         ...(temperature != null ? { temperature } : {}),
         ...(maxTokens ? { num_predict: maxTokens } : {}),
@@ -484,13 +556,13 @@ export async function streamChat({ provider, apiKey, model, system, messages, te
       max_tokens: maxTokens || 4096,
       ...(system ? { system } : {}),
       ...(temperature != null ? { temperature: Math.min(temperature, 1) } : {}),
-      messages: messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
+      messages: shaped.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
     };
   } else {
     url = `${base}/chat/completions`;
     body = {
       model, stream: true,
-      messages: system ? [{ role: 'system', content: system }, ...messages] : messages,
+      messages: system ? [{ role: 'system', content: system }, ...shaped] : shaped,
       ...(temperature != null ? { temperature } : {}),
       ...(maxTokens ? { max_tokens: maxTokens } : {}),
       stream_options: { include_usage: true },

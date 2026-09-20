@@ -542,6 +542,19 @@ async function runChecks(d, check) {
   check('nothing is granted yet', Array.isArray(held) && held.length === 0,
     JSON.stringify(held));
 
+  /* Page tools ships content.js and declares nothing. The claim the manifest
+     check above makes is only as good as this one: a content script in the
+     manifest would carry its own host permissions, so "nothing is required on
+     install" and "there is a content script" cannot both be true. */
+  check('no content script is declared', !declared.content_scripts?.length,
+    JSON.stringify(declared.content_scripts ?? []));
+
+  const registered = await d.eval(`
+    (globalThis.browser ?? globalThis.chrome).scripting.getRegisteredContentScripts()
+      .then(list => list.map(s => s.id))`);
+  check('page tools run nowhere until a site is allowed',
+    Array.isArray(registered) && registered.length === 0, JSON.stringify(registered));
+
   // ── the actual point ─────────────────────────────────────
   const reach = `fetch('http://127.0.0.1:${MOCK_PORT}/v1/models')
       .then(r => r.json()).then(j => j.data?.[0]?.id ?? 'no models')
@@ -555,6 +568,17 @@ async function runChecks(d, check) {
 
   const allowed = await d.grant(['http://127.0.0.1/*']);
   check('the host can be granted', allowed === true, d.grantNote);
+
+  /* And granting a host for a *provider* does not turn page tools on for it.
+     The two grants come out of the same `<all_urls>` pool and are otherwise
+     unrelated: a site page tools may run on is named in Settings → Page tools
+     and nowhere else, so the registration stays empty here however many
+     endpoints have been allowed. */
+  const afterGrant = await d.eval(`
+    (globalThis.browser ?? globalThis.chrome).scripting.getRegisteredContentScripts()
+      .then(list => list.map(s => s.id))`);
+  check('allowing a provider host does not turn page tools on',
+    Array.isArray(afterGrant) && afterGrant.length === 0, JSON.stringify(afterGrant));
 
   const fromExtension = await waitFor(async () => {
     const got = await d.eval(reach);

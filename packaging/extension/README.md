@@ -56,6 +56,8 @@ so rather than implying otherwise.
 | `sidePanel` (Chrome) | the app's only UI; Firefox uses `sidebar_action`, which needs none, and Safari has neither |
 | `declarativeNetRequestWithHostAccess` (Chrome, Safari) | one rule, removing `Origin` from this extension's own requests — see below. The `WithHostAccess` spelling modifies only hosts already granted, and carries no install warning of its own |
 | `webRequest`, `webRequestBlocking` (Firefox) | the same rule, the only way Firefox will apply it to an extension's own requests |
+| `scripting` | registering the page-tools content script at runtime, for the sites you allowed and no others — see below. No install warning |
+| `storage` | three small things the page end needs and cannot ask the app for: which sites are allowed, the agent names its picker offers, and a request waiting for the panel to open. No install warning |
 
 `npm run ext:test` checks the model from both ends: that a CORS-less endpoint is
 out of reach before the grant, and in reach after it. Firefox goes through the
@@ -172,12 +174,46 @@ ad-hoc — which is what the command above produces, because we do not pay Apple
 for a certificate — also needs *Develop → Allow Unsigned Extensions*, which
 Safari forgets every time it quits.
 
+## Page tools
+
+Select text on a page and a small bar offers to **summarize** it, **translate**
+it, or **ask an agent** about it; focus a text field and a chip offers to
+**write with an agent**. Each one opens the panel on a fresh chat with the
+request already in it, answered by the agent you picked or by the one the app
+is already on.
+
+It is off until you name a site. **Settings → Page tools** lists the sites it
+runs on, and adding one goes through the browser's own permission prompt, out
+of the same `<all_urls>` pool the provider grants come from. Removing a site
+gives the permission back.
+
+That is why `content.js` is shipped but is **not** in any manifest. A content
+script declared there brings its host permissions with it, and for a tool that
+could be used anywhere that is the "read and change all your data on all
+websites" install warning — which would not even be true: nothing runs on a
+site you have not named. `background.js` registers the script at runtime
+instead, with `scripting.registerContentScripts`, for exactly the patterns the
+browser has granted.
+
+Writing into a field goes through a tool call rather than straight from the
+reply. The model puts the text in a `<write>` block — the same shape as the
+`<ask>` and `<tool>` blocks the chat already uses, and for the same reason: it
+works on a provider with no function-calling at all. The block is parsed out
+and only what was inside it reaches the field, so "Sure, here's a draft:" stays
+in the chat instead of landing in somebody's outbox. `web/src/page-tools.js` is
+the app's end of all of it.
+
+Password fields get no chip. The chip carries the field's current contents up
+to the chat so you can ask for a revision, which is right for a paragraph and
+wrong for a password.
+
 ## What the manifests ask for
 
-`<all_urls>`, and per browser one permission for dropping the `Origin` header
-(below) plus `sidePanel` on Chrome. Nothing else: no `tabs`, no `storage`, no
-content scripts, no `web_accessible_resources` — the extension never touches a
-page you visit, because it never runs anywhere except its own panel.
+`<all_urls>`, `scripting` and `storage` for page tools, and per browser one
+permission for dropping the `Origin` header (below) plus `sidePanel` on Chrome.
+Nothing else: no `tabs`, no `web_accessible_resources`, and no content script
+in the manifest — page tools registers one at runtime for the sites you
+allowed, and nothing runs on any other page you visit.
 
 `<all_urls>` is broad, and the narrower thing does not exist: the endpoint is
 whichever one you typed. A provider you self-host, a runtime on a port only

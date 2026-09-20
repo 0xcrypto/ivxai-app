@@ -442,6 +442,120 @@ body {
   box-shadow: 0 .25rem .75rem var(--n-shadow);
 }
 
+/* ── Attachments ───────────────────────────────────────────
+
+   Two places, one look: chips in the tray while a file waits to be sent, and
+   cards under a message once it has been. A picture shows itself; everything
+   else shows its own icon, its name and its size, because that is all there
+   is to show about a zip. */
+
+.att-grid {
+  display: flex; flex-wrap: wrap; gap: .5rem;
+  margin-bottom: .5rem;
+}
+.bubble > .att-grid:last-child { margin-bottom: 0; }
+.bubble-text { white-space: pre-wrap; }
+
+.att-card {
+  display: flex; align-items: center; gap: .5rem;
+  max-width: 100%;
+  padding: 0; border: 1px solid var(--bs-border-color); border-radius: .75rem;
+  background-color: var(--bs-body-bg); color: var(--bs-body-color);
+  overflow: hidden; text-align: left;
+}
+.att-file { padding: .5rem .75rem; }
+.att-file:hover, .att-media:hover { border-color: var(--n-500); }
+.att-media { flex-direction: column; align-items: stretch; gap: 0; }
+
+.att-image {
+  display: block;
+  max-width: min(18rem, 100%); max-height: 18rem;
+  width: auto; height: auto;
+  object-fit: cover; background-color: var(--bs-secondary-bg);
+}
+.att-video { display: block; max-width: min(22rem, 100%); max-height: 16rem; background-color: #000; }
+.att-audio { display: block; width: min(18rem, 100%); }
+
+.att-media .att-line { padding: .375rem .625rem; }
+.att-line { display: flex; flex-direction: column; min-width: 0; }
+.att-name {
+  font-size: .875rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 14rem;
+}
+.att-size { font-size: .75rem; color: var(--bs-secondary-color); }
+.att-icon { font-size: 1.25rem; color: var(--bs-secondary-color); }
+.att-missing { border-style: dashed; color: var(--bs-secondary-color); padding: .5rem .75rem; }
+
+/* The full-size look at a picture, on the sheet. */
+.att-view { display: flex; flex-direction: column; gap: .75rem; align-items: center; }
+.att-view-image {
+  max-width: 100%; max-height: 60dvh;
+  border-radius: .75rem; object-fit: contain;
+}
+
+/* ── the composer's tray ───────────────────────────────────── */
+
+.attach-tray {
+  display: flex; flex-wrap: wrap; gap: .375rem;
+  margin-bottom: .5rem;
+}
+.attach-chip {
+  display: inline-flex; align-items: center; gap: .5rem;
+  max-width: 100%;
+  padding: .25rem .25rem .25rem .5rem;
+  border: 1px solid var(--bs-border-color); border-radius: .75rem;
+  background-color: var(--bs-secondary-bg);
+}
+.attach-chip-thumb {
+  width: 2rem; height: 2rem; border-radius: .5rem; object-fit: cover;
+  background-color: var(--bs-tertiary-bg);
+}
+.attach-chip-icon {
+  width: 2rem; height: 2rem;
+  display: grid; place-items: center;
+  border-radius: .5rem; background-color: var(--bs-tertiary-bg);
+  color: var(--bs-secondary-color); font-size: 1rem;
+}
+.attach-chip-text { display: flex; flex-direction: column; min-width: 0; }
+.attach-chip-name {
+  font-size: .8125rem; max-width: 11rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.attach-chip-size { font-size: .6875rem; color: var(--bs-secondary-color); }
+.attach-chip-x {
+  flex: 0 0 auto;
+  width: 1.75rem; height: 1.75rem;
+  display: grid; place-items: center;
+  border: 0; border-radius: 50%;
+  background: transparent; color: var(--bs-secondary-color); font-size: .875rem;
+}
+.attach-chip-x:hover { background-color: var(--bs-tertiary-bg); color: var(--bs-body-color); }
+
+/* Matches .send-btn's footprint so the row stays symmetrical, without its
+   filled circle: attaching is an aside, sending is the action. */
+.attach-btn {
+  flex: 0 0 auto;
+  display: grid; place-items: center;
+  width: var(--tap); height: var(--tap);
+  margin-left: -.5rem;
+  border: 0; border-radius: 50%;
+  background: transparent; color: var(--bs-secondary-color);
+  font-size: 1.125rem; line-height: 1;
+}
+.attach-btn:hover { background-color: var(--bs-tertiary-bg); color: var(--bs-body-color); }
+
+/* Dropping a file anywhere over the chat attaches it, so the whole pane is
+   what lights up — a small target would be a worse promise than the truth. */
+.main.is-dropping::after {
+  content: 'Drop to attach';
+  position: absolute; inset: 0; z-index: 3;
+  display: grid; place-items: center;
+  margin: .5rem; border: 2px dashed var(--n-500); border-radius: 1rem;
+  background-color: color-mix(in srgb, var(--bs-body-bg) 82%, transparent);
+  color: var(--bs-body-color); font-size: .9375rem;
+  pointer-events: none;
+}
+
 /* ── Composer ──────────────────────────────────────────────── */
 
 .composer {
