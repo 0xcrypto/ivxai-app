@@ -117,6 +117,16 @@ every chat using it. An agent can also ask another agent for help mid-answer.
 runs as a program on your own machine goes through the bridge, since a browser
 cannot start a program. You choose which agents get which tools.
 
+A hosted MCP server that signs you in rather than handing you a token — Notion,
+Linear and most of the others — is added by pasting the same one-line config
+its own setup page shows you, and then pressing **Sign in**. A window opens, you
+approve it there, and the token comes back here. This app registers itself with
+that server at that moment, from your browser: there is no developer account of
+ours in the middle, because there is nothing of ours in the middle of anything.
+The token is kept with your API keys — encrypted at rest as soon as you set a
+passphrase — and refreshes itself. A server that issues tokens by hand still
+takes one in the Bearer token field.
+
 The **Store** installs services, agents, tools and skills that other people have
 written down. Entries are settings, never code, and installing one still asks
 first.

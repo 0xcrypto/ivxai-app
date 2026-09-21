@@ -16,6 +16,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "mock": "node tools/mock-provider.mjs",
+    "mock:mcp": "node tools/mock-mcp-oauth.mjs",
     "icons": "node tools/make-icons.mjs",
     "check": "node tools/check-imports.mjs"
   },

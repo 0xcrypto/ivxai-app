@@ -80,6 +80,23 @@ const icons = Object.fromEntries(ICON_SIZES.map(s => [s, `icons/ext-${s}.png`]))
    of any other kind ever leaves IndexedDB. */
 const PAGE_TOOLS = ['scripting', 'storage'];
 
+/* An MCP server that signs you in rather than handing you a token has to
+   redirect a browser back somewhere afterwards, and no authorization server
+   will redirect to `chrome-extension://`. `identity.launchWebAuthFlow` is the
+   way out: the browser hands out an https address on its own domain and
+   intercepts the redirect to it. That needs the `identity` permission.
+
+   Optional wherever the browser allows it, so an install that never connects
+   such a server is never asked. Firefox is not one of those browsers — it does
+   not accept `identity` in `optional_permissions` and drops it on install,
+   which `npm run ext:test` catches — so there it is required instead. Neither
+   spelling adds a line to the install screen: `identity` carries no permission
+   warning in either browser. Safari takes the key and has no `browser.identity`
+   behind it, which mcp-oauth.js reports in a sentence rather than failing at a
+   redirect nobody can read. */
+const IDENTITY = { optional_permissions: ['identity'] };
+const IDENTITY_REQUIRED = ['identity'];
+
 const base = () => ({
   manifest_version: 3,
   name: brand.name,
@@ -89,6 +106,7 @@ const base = () => ({
   icons,
   action: { default_title: brand.name, default_icon: icons },
   optional_host_permissions: ['<all_urls>'],
+  ...IDENTITY,
   // 'wasm-unsafe-eval' is what lets WebLLM compile the model that runs inside
   // the browser. It is not 'unsafe-eval': no eval(), no new Function().
   content_security_policy: {
@@ -129,8 +147,10 @@ const manifests = {
     // Firefox has declarativeNetRequest but does not apply it to an
     // extension's own requests; blocking webRequest is what works here, and is
     // still supported under MV3.
-    permissions: ['webRequest', 'webRequestBlocking', ...PAGE_TOOLS],
+    permissions: ['webRequest', 'webRequestBlocking', ...PAGE_TOOLS, ...IDENTITY_REQUIRED],
     background: { scripts: ['background.js'] },
+    // Required above instead; Firefox will not take it as optional.
+    optional_permissions: undefined,
     /* `data_collection_permissions` is required of every new add-on since
        3 November 2025, and AMO rejects an upload without it. `none` is the
        declaration that nothing is collected or transmitted: this extension

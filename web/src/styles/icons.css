@@ -35,3 +35,7 @@
 .ri-music-2-line::before { content: '\ef83'; }
 .ri-file-text-line::before { content: '\ed0f'; }
 .ri-file-line::before { content: '\eceb'; }
+/* What an `@` mention can name: an open tab, an agent, one of your chats. */
+.ri-window-line::before { content: '\f2c6'; }
+.ri-robot-2-line::before { content: '\f3d9'; }
+.ri-chat-1-line::before { content: '\eb4d'; }

@@ -424,3 +424,207 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
   }
 });
+
+/* ── reading a page ────────────────────────────────────────────
+
+   Three things the app cannot do for itself, because an extension page has no
+   reach into a tab: list what is open, read a page's markup, and photograph
+   one. All three are bounded by the same list as everything else here — the
+   sites page tools was allowed on — so a tab the person has not allowed is not
+   listed, not read and not captured. A grant made for a *provider* endpoint
+   does not widen this: `allowedUrl` checks the page-tools list specifically,
+   not whatever the browser happens to have granted.
+
+   The app asks for a page only when the person has mentioned its tab with `@`.
+   That is the app's rule rather than this one's, and it is enforced there; what
+   is enforced here is the permission, which is the part a page cannot argue
+   with. */
+
+/** How much markup is worth sending back. Past this the model is reading
+    boilerplate, and the cut is reported rather than made quietly. */
+const SNAPSHOT_LIMIT = 60000;
+
+/**
+ * Is this address one page tools may touch?
+ *
+ * Compared against the patterns as they are written, which is safe because
+ * they are only ever written one way — `patternFor` in web/src/host-access.js
+ * builds `scheme://hostname/*` and nothing else, and `<all_urls>` is the one
+ * special case. A matcher that tried to be general would be a wildcard parser
+ * standing between a page and a permission, which is not a thing worth
+ * writing twice.
+ */
+function allowedUrl(url, patterns) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (!/^https?:$/.test(parsed.protocol)) return false;
+  return patterns.some(p => p === '<all_urls>' || p === `${parsed.protocol}//${parsed.hostname}/*`);
+}
+
+/** The open tabs the person may mention, newest window first as the browser
+    reports them. A tab with no `url` is one we have no permission for — the
+    browser withholds it rather than erroring — and is left out either way. */
+async function listTabs() {
+  const patterns = await read(local, SITES_KEY, []);
+  if (!patterns.length) return [];
+  let tabs = [];
+  try {
+    tabs = await api.tabs.query({});
+  } catch {
+    return [];
+  }
+  return tabs
+    .filter(tab => tab.id !== undefined && tab.url && allowedUrl(tab.url, patterns))
+    .map(tab => ({
+      tabId: tab.id,
+      windowId: tab.windowId ?? null,
+      title: tab.title || '',
+      url: tab.url,
+      host: (() => {
+        try { return new URL(tab.url).hostname; } catch { return ''; }
+      })(),
+    }))
+    .slice(0, 50);
+}
+
+/**
+ * The page's markup, with everything that is not the page taken out.
+ *
+ * Injected rather than asked of content.js: `executeScript` reaches a tab
+ * whether or not the content script happens to be in it, which matters because
+ * the registration only catches pages loaded after it. Same permission either
+ * way — this runs nowhere `allowedUrl` has not already agreed to.
+ *
+ * Declared as a plain function with no free variables because it is serialized
+ * and run in another page; nothing it closes over would travel with it.
+ */
+function collectSnapshot(selector, limit) {
+  const root = (selector && document.querySelector(selector)) || document.documentElement;
+  if (!root) return { error: `Nothing on the page matches ${selector}.` };
+
+  const copy = root.cloneNode(true);
+  /* Script and style are not content; link and meta are not either. An iframe
+     is another document that this cannot reach into, and canvas and svg are
+     pictures — a screenshot is the tool for those. */
+  for (const node of copy.querySelectorAll(
+    'script, style, noscript, template, link, meta, svg, canvas, iframe, object, embed')) {
+    node.remove();
+  }
+  /* Attributes that are plumbing rather than meaning. Handlers and inline
+     styles are noise; a framework's data-* bookkeeping can be most of the
+     bytes on the page. id and class stay — they are how the model names a
+     part of the page back to us. */
+  for (const node of copy.querySelectorAll('*')) {
+    for (const attr of [...node.attributes]) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith('on') || name === 'style' || name.startsWith('data-')) {
+        node.removeAttribute(attr.name);
+      }
+    }
+  }
+
+  const html = copy.outerHTML
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/>\s+</g, '><')
+    .replace(/[^\S\n]{2,}/g, ' ')
+    .trim();
+
+  return {
+    title: document.title,
+    url: location.href,
+    html: html.slice(0, limit),
+    truncated: html.length > limit,
+  };
+}
+
+/**
+ * A picture of the tab.
+ *
+ * Firefox can photograph a tab that is not in front. Chrome and Safari cannot
+ * — `captureVisibleTab` means what it says — so the tab is brought forward,
+ * caught, and put back where it was. Bringing someone's tab forward is rude
+ * enough that it is worth doing only for as long as the shutter takes, hence
+ * the restore in `finally`.
+ */
+async function captureTab(tabId) {
+  const tab = await api.tabs.get(tabId);
+  if (api.tabs.captureTab) return api.tabs.captureTab(tabId, { format: 'png' });
+
+  const [front] = await api.tabs.query({ active: true, windowId: tab.windowId });
+  const restore = front && front.id !== tabId ? front.id : null;
+  if (restore) {
+    await api.tabs.update(tabId, { active: true });
+    // A tab that has just been shown has not necessarily been painted, and an
+    // unpainted tab photographs as the one before it.
+    await new Promise(done => setTimeout(done, 250));
+  }
+  try {
+    return await api.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  } finally {
+    if (restore) api.tabs.update(restore, { active: true }).catch(() => { /* window gone */ });
+  }
+}
+
+/** Everything above, behind one permission check, so no caller can reach a
+    tab by handing us an id the person never allowed. */
+async function onAllowedTab(tabId, work) {
+  const patterns = await read(local, SITES_KEY, []);
+  let tab;
+  try {
+    tab = await api.tabs.get(tabId);
+  } catch {
+    return { ok: false, error: 'That tab is no longer open.' };
+  }
+  if (!tab.url || !allowedUrl(tab.url, patterns)) {
+    return { ok: false, error: 'Page tools are not allowed on that tab.' };
+  }
+  try {
+    return await work(tab);
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+}
+
+api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  switch (message?.type) {
+    /* From the app, when someone types `@`: what is open and mentionable. */
+    case 'ivx:tabs': {
+      listTabs().then(tabs => sendResponse({ tabs }));
+      return true;
+    }
+
+    /* From the app, for a `<snapshot>` call on a mentioned tab. */
+    case 'ivx:page-snapshot': {
+      onAllowedTab(message.tabId, async () => {
+        const [hit] = await api.scripting.executeScript({
+          target: { tabId: message.tabId },
+          func: collectSnapshot,
+          args: [message.selector || '', SNAPSHOT_LIMIT],
+        });
+        const result = hit?.result;
+        if (!result) return { ok: false, error: 'The page returned nothing.' };
+        if (result.error) return { ok: false, error: result.error };
+        return { ok: true, ...result };
+      }).then(sendResponse);
+      return true;
+    }
+
+    /* From the app, for a `<screenshot>` call. Comes back as a data URL, which
+       the app turns into an ordinary attachment on the tool's own message. */
+    case 'ivx:page-screenshot': {
+      onAllowedTab(message.tabId, async tab => {
+        const dataUrl = await captureTab(message.tabId);
+        if (!dataUrl) return { ok: false, error: 'The browser returned no image.' };
+        return { ok: true, dataUrl, title: tab.title || '', url: tab.url };
+      }).then(sendResponse);
+      return true;
+    }
+
+    default:
+      return false;
+  }
+});

@@ -846,6 +846,9 @@ function mcpHealthLine(server) {
   const health = mcpHealth.get(server.id);
   if (!health) return where;
   if (health === 'checking') return 'Asking it what it offers…';
+  // The server's own sentence when it gave one: "needs sign-in" is the
+  // category, and what it actually objected to is the useful half.
+  if (health.needsAuth) return `Needs sign-in · ${health.detail || where}`;
   if (!health.ok) return `Not answering · ${health.error}`;
   if (!health.tools.length) return 'Answers, but offers no tools';
   return `${health.tools.length} tool${health.tools.length === 1 ? '' : 's'} · ${where}`;
@@ -1107,6 +1110,74 @@ function mcpServerBody(server) {
     },
   });
 
+  /* Signing in, for a server that wants it.
+
+     Deliberately not hidden behind a "this server uses OAuth" setting: whether
+     it does is the server's business and it says so in a 401, so the row is
+     always offered and the discovery happens on the click. A server that
+     publishes no OAuth metadata says so then, in a sentence, and the bearer
+     token field above is still there for one that issues tokens by hand. */
+  const health = mcpHealth.get(server.id);
+  const isSignedIn = mcp.signedIn(server);
+
+  const signIn = ({ fresh = false } = {}) => {
+    /* Straight out of the click, with nothing awaited first. The popup and the
+       browser's `identity` permission both need the gesture this click is, and
+       the first await inside `connect` is the one that spends it. */
+    const running = toast(`Signing in to ${server.name}…`, '', 120000);
+    // Whatever it said before was said about the old token.
+    mcpHealth.delete(server.id);
+    mcp.connect(server, health?.challenge || '', { fresh })
+      .then(async () => {
+        running.remove();
+        toast(`Signed in to ${server.name}`, 'ok');
+        mcpHealth.set(server.id, await mcp.test(server));
+        refreshSheet();
+      })
+      .catch(err => {
+        running.remove();
+        toast(err.message || String(err), 'err', 10000);
+        refreshSheet();
+      });
+  };
+
+  /* Signed in, and refused anyway. Worth its own row: the fix is to go round
+     the flow again, and making someone sign out first to reach a sign-in
+     button is a step that exists only because we did not offer this one. */
+  const reAuthRow = isSignedIn && health?.needsAuth
+    ? actionRow('Sign in again', {
+        sub: health.detail || 'The server would not accept the last token',
+        // From scratch, registration included — see the note in mcp-oauth.js.
+        onclick: () => signIn({ fresh: true }),
+      })
+    : null;
+
+  const signInRow = isSignedIn
+    ? actionRow('Sign out', {
+        sub: server.oauth?.issuer
+          ? `Signed in · ${access.hostOf(server.oauth.issuer)}`
+          : 'Signed in',
+        onclick: async () => {
+          const ok = await confirmAction({
+            title: `Sign out of ${server.name}?`,
+            body: 'This browser forgets the token and the registration that goes with it. '
+              + 'Nothing is revoked at the server — remove the app there too if you want that.',
+            okText: 'Sign out',
+          });
+          if (!ok) return;
+          await mcp.disconnect(server);
+          mcpHealth.delete(server.id);
+          toast('Signed out');
+          refreshSheet();
+        },
+      })
+    : actionRow('Sign in', {
+        sub: health?.needsAuth
+          ? 'This server asked for it'
+          : 'For a server that signs you in rather than issuing a token',
+        onclick: () => signIn(),
+      });
+
   const isStdio = server.transport === 'stdio';
 
   return el('div', {}, [
@@ -1133,12 +1204,25 @@ function mcpServerBody(server) {
     ] : [
       group('Remote server', [
         el('div', { class: 'item' }, [field('URL', urlInput)]),
-        el('div', { class: 'item' }, [field('Bearer token', tokenInput,
-          'Stored in this browser only. Left empty for a server that wants none.')]),
+      ], 'The URL is the server\'s MCP endpoint.'),
+
+      group('Access', [
+        reAuthRow,
+        signInRow,
+        isSignedIn ? null : el('div', { class: 'item' }, [field('Bearer token', tokenInput,
+          'For a server that issued you one by hand. Stored in this browser only.')]),
+      ], isSignedIn
+        ? 'The token is kept with your API keys — encrypted at rest once you set a '
+          + 'passphrase under Privacy & data — and is refreshed on its own.'
+        : 'Most hosted servers sign you in: a window opens, you approve it there, '
+          + 'and the token comes back here. This app registers itself with the server '
+          + 'at that moment; there is no account of ours in between.'),
+
+      group('Connection', [
         headersButton,
         viaBridgeSwitch,
-      ], 'The URL is the server\'s MCP endpoint. If it refuses browser origins ' +
-        'with a CORS error, the switch above routes it through the bridge instead.'),
+      ], 'If the server refuses browser origins with a CORS error, the switch above '
+        + 'routes it through the bridge instead.'),
     ]),
 
     group(null, [testButton]),

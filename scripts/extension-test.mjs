@@ -549,11 +549,35 @@ async function runChecks(d, check) {
   check('no content script is declared', !declared.content_scripts?.length,
     JSON.stringify(declared.content_scripts ?? []));
 
+  /* `identity` is how an MCP server's OAuth redirect gets back to an
+     extension. It is optional where the browser allows that, so an install
+     that never connects such a server is never asked for it — and required on
+     Firefox, which drops it from `optional_permissions` rather than honouring
+     it. This checks the browser ended up with a usable one either way, which
+     is the claim that matters: without it the sign-in cannot complete, and it
+     would fail at the redirect rather than at the button. */
+  const identityRequired = declared.permissions?.includes('identity');
+  const identityOptional = declared.optional_permissions?.includes('identity');
+  check('an MCP sign-in has a way to get back to the extension',
+    Boolean(identityRequired || identityOptional),
+    identityOptional ? 'optional, asked for on the click' : 'required by this browser');
+
   const registered = await d.eval(`
     (globalThis.browser ?? globalThis.chrome).scripting.getRegisteredContentScripts()
       .then(list => list.map(s => s.id))`);
   check('page tools run nowhere until a site is allowed',
     Array.isArray(registered) && registered.length === 0, JSON.stringify(registered));
+
+  /* And the `@` menu has nothing to offer, which is the same boundary seen
+     from the other side: an open tab is mentionable only on a site page tools
+     was allowed on, so with none allowed there is nothing to mention and
+     nothing for the snapshot and screenshot tools to point at. The tab this
+     very check runs in is open and is deliberately not in the list. */
+  const mentionable = await d.eval(`
+    (globalThis.browser ?? globalThis.chrome).runtime
+      .sendMessage({ type: 'ivx:tabs' }).then(r => r?.tabs ?? 'no answer')`);
+  check('no tab can be mentioned until a site is allowed',
+    Array.isArray(mentionable) && mentionable.length === 0, JSON.stringify(mentionable));
 
   // ── the actual point ─────────────────────────────────────
   const reach = `fetch('http://127.0.0.1:${MOCK_PORT}/v1/models')
@@ -579,6 +603,13 @@ async function runChecks(d, check) {
       .then(list => list.map(s => s.id))`);
   check('allowing a provider host does not turn page tools on',
     Array.isArray(afterGrant) && afterGrant.length === 0, JSON.stringify(afterGrant));
+
+  // Nor does it put a tab in the `@` menu, however many tabs are open on it.
+  const stillNone = await d.eval(`
+    (globalThis.browser ?? globalThis.chrome).runtime
+      .sendMessage({ type: 'ivx:tabs' }).then(r => r?.tabs ?? 'no answer')`);
+  check('allowing a provider host does not make its tabs mentionable',
+    Array.isArray(stillNone) && stillNone.length === 0, JSON.stringify(stillNone));
 
   const fromExtension = await waitFor(async () => {
     const got = await d.eval(reach);

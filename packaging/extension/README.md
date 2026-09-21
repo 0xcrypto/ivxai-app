@@ -56,8 +56,15 @@ so rather than implying otherwise.
 | `sidePanel` (Chrome) | the app's only UI; Firefox uses `sidebar_action`, which needs none, and Safari has neither |
 | `declarativeNetRequestWithHostAccess` (Chrome, Safari) | one rule, removing `Origin` from this extension's own requests — see below. The `WithHostAccess` spelling modifies only hosts already granted, and carries no install warning of its own |
 | `webRequest`, `webRequestBlocking` (Firefox) | the same rule, the only way Firefox will apply it to an extension's own requests |
-| `scripting` | registering the page-tools content script at runtime, for the sites you allowed and no others — see below. No install warning |
+| `scripting` | registering the page-tools content script at runtime, for the sites you allowed and no others — and reading a mentioned page. No install warning |
 | `storage` | three small things the page end needs and cannot ask the app for: which sites are allowed, the agent names its picker offers, and a request waiting for the panel to open. No install warning |
+| `identity` | signing in to an MCP server that uses OAuth. No authorization server will redirect to `chrome-extension://`, and `identity.launchWebAuthFlow` supplies an https address on the browser's own domain instead. Optional on Chrome and Safari, so it is asked for on the click that needs it and an install that never connects such a server is never asked; required on Firefox, which drops it from `optional_permissions` rather than honouring it. No install warning either way |
+
+Note what is *not* there: no `tabs`. Listing the tabs an `@` mention can name
+uses `tabs.query`, which any extension may call — the browser withholds the
+title and address of every tab you have not granted a host for, so the list is
+exactly the allowed sites and the permission that shows on install as "read
+your browsing history" is never asked for.
 
 `npm run ext:test` checks the model from both ends: that a CORS-less endpoint is
 out of reach before the grant, and in reach after it. Firefox goes through the
@@ -206,6 +213,39 @@ the app's end of all of it.
 Password fields get no chip. The chip carries the field's current contents up
 to the chat so you can ask for a revision, which is right for a paragraph and
 wrong for a password.
+
+## Mentions, and reading a page
+
+Type `@` in the composer to name an **open tab**, an **agent** or one of your
+own **chats**. What you name goes into the message where you were typing, and
+the thing itself is added to what the conversation carries — so "summarize it"
+has an *it*, and still does two turns later.
+
+Only tabs on allowed sites are listed. That is the same boundary as everything
+else here, seen from the other side: with no site allowed there is nothing to
+mention, and a host granted for a *provider* endpoint does not put your other
+tabs in the menu. `npm run ext:test` checks both.
+
+Naming a tab is also what unlocks the two reading tools:
+
+| block | what it does |
+| --- | --- |
+| `<snapshot tab="…">` | the page's HTML, with scripts, styles, inline handlers and framework `data-*` stripped out. A CSS selector inside the block narrows it to one part of the page |
+| `<screenshot tab="…">` | a picture of what is on screen in that tab, which arrives as an ordinary image attachment on the tool's own result |
+
+The permission says what the extension *may* read; the mention says what it
+*does*. A model is never told it can read every allowed tab, because a model
+told that goes and reads them.
+
+Firefox can photograph a tab that is not in front. Chrome and Safari cannot —
+`captureVisibleTab` means what it says — so the tab is brought forward for as
+long as the shutter takes and then put back.
+
+Anything a snapshot or screenshot returns is content from a web page, and the
+prompt says so in as many words: it is data, not instructions, and a page that
+asks the model to do something should be reported rather than obeyed. That is
+not a guarantee — nothing at this layer is — but it is the difference between
+a model that names the attempt and one that is surprised by it.
 
 ## What the manifests ask for
 
