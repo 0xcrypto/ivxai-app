@@ -36,6 +36,19 @@ export const PRESETS = [
   { key: 'localai',    name: 'LocalAI',           kind: 'openai',    baseUrl: 'http://localhost:8081/v1', needsKey: false, local: true },
   { key: 'textgen',    name: 'Text generation WebUI', kind: 'openai', baseUrl: 'http://localhost:5000/v1', needsKey: false, local: true },
 
+  // No key and no machine to run a model on: Cloudflare Workers AI, run by us.
+  // It answers browsers itself, so it needs no bridge — but it is our server,
+  // and the hint says so.
+  { key: 'ivxai',      name: 'ivx/ai (Workers AI)', kind: 'openai',  baseUrl: 'https://api.ivx.run/ai/v1', needsKey: true,
+    defaultModel: '@cf/openai/gpt-oss-20b', models: ['@cf/openai/gpt-oss-20b'],
+    hint: 'Open models on Cloudflare Workers AI, served by the ivx/ai API. The key is your ivx/ai token. Messages go through our server to Cloudflare and are not kept.' },
+  // Other people's keys, from any provider in the ivx/ai pool, paid for with
+  // credit earned by lending your own or redeemed from tokens. Models are
+  // named for where they run (`anthropic/…`, `ollama/…`), so picking one is
+  // picking whose data policy applies; /pool/v1/models says which is which.
+  { key: 'ivxpool',    name: 'ivx/ai Pool', kind: 'openai', baseUrl: 'https://api.ivx.run/ai/pool/v1', needsKey: true,
+    defaultModel: 'ollama/gpt-oss:120b', models: ['ollama/gpt-oss:120b'],
+    hint: 'Models on keys other people lent, from Ollama, OpenAI, Anthropic and more. Sign in at ai.ivx.run/api with a wallet, lend a key or redeem tokens, and make the token that goes here there. Messages pass through our server to the provider named in the model, which may keep them; the model list says which do.' },
   { key: 'openrouter', name: 'OpenRouter',        kind: 'openai',    baseUrl: 'https://openrouter.ai/api/v1', needsKey: true,
     hint: 'Key from openrouter.ai/keys' },
   { key: 'openai',     name: 'OpenAI',            kind: 'openai',    baseUrl: 'https://api.openai.com/v1', needsKey: true },
@@ -116,7 +129,7 @@ export class ProviderError extends Error {
 async function networkHint(provider, err) {
   const local = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/i.test(provider.baseUrl);
   const mixed = location.protocol === 'https:' && provider.baseUrl.startsWith('http:');
-  const via = bridge.ready();
+  const via = bridge.via(provider.baseUrl);
 
   // Through the bridge the browser never sees the endpoint, so none of the
   // browser-imposed reasons below apply and repeating them would mislead.
@@ -127,7 +140,7 @@ async function networkHint(provider, err) {
   // itself. (When the bridge did reach the endpoint and the endpoint failed,
   // it answers with a status and a reason, and that is read elsewhere.)
   if (via) {
-    return bridge.explainUnreachable();
+    return bridge.explainUnreachable(via);
   }
 
   // In the extension, whether the browser applied a CORS rule to this call
@@ -156,7 +169,7 @@ async function networkHint(provider, err) {
   if (mixed && !local) {
     return `Blocked: this page is HTTPS and the endpoint is plain HTTP.${offer}`;
   }
-  if (provider.kind === 'ollama') {
+  if (provider.kind === 'ollama' && local) {
     return `Could not reach ${provider.baseUrl}. Either start Ollama with ` +
       `OLLAMA_ORIGINS='${location.origin}', or use the bridge ` +
       '(Settings → CORS bypass).';

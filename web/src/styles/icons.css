@@ -39,3 +39,7 @@
 .ri-window-line::before { content: '\f2c6'; }
 .ri-robot-2-line::before { content: '\f3d9'; }
 .ri-chat-1-line::before { content: '\eb4d'; }
+.ri-file-copy-line::before { content: '\ecd5'; }
+.ri-edit-line::before { content: '\ec86'; }
+.ri-refresh-line::before { content: '\f064'; }
+.ri-delete-bin-line::before { content: '\ec2a'; }

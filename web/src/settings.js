@@ -1361,6 +1361,8 @@ function corsBypassScreen() {
 
     group('CORS bridge', rows, statusNote(s)),
 
+    hostedGroup(s),
+
     group('What this is', [
       actionRow('Why you might need it', {
         sub: bridge.EXTENSION
@@ -1373,8 +1375,104 @@ function corsBypassScreen() {
   ]);
 }
 
+const API_HELP = 'https://ai.ivx.run/api/';
+
+/**
+ * The hosted bridge, for when the one on this machine cannot run.
+ *
+ * Its own group, with its own switch, because it is a different promise: the
+ * bridge above is a program on this computer, and this is ours on the
+ * internet. The note under it says that in so many words, every time, rather
+ * than once in an about screen nobody opens.
+ */
+function hostedGroup(s) {
+  const h = s.hosted;
+  const host = (() => { try { return new URL(h.url).host; } catch { return h.url; } })();
+
+  const askToken = async () => {
+    const next = await promptText({
+      title: 'ivx/ai token',
+      value: h.token,
+      placeholder: 'ivx_…',
+    });
+    return next === null ? null : next.trim();
+  };
+
+  const toggle = async on => {
+    if (!on) {
+      await bridge.disableHosted();
+      refreshSheet();
+      return;
+    }
+    let token = h.token;
+    if (!token) {
+      token = await askToken();
+      if (!token) { refreshSheet(); return; }
+    }
+    try {
+      await bridge.enableHosted({ token });
+      toast(`Hosted bridge on — ${host}`, 'ok');
+    } catch (err) {
+      await bridge.configureHosted({ token });
+      toast(err.message, 'err');
+    }
+    refreshSheet();
+  };
+
+  const note = !h.enabled
+    ? `Off. When it is on and the bridge on this machine is off or not answering, ` +
+      `calls to online services go through ${host} instead. Your key and your ` +
+      'messages pass through that server on the way. It keeps none of them, but ' +
+      'it is a server in the middle, which the bridge on your own machine is not. ' +
+      'Endpoints on this machine or network never go that way.'
+    : !h.reachable
+      ? `Nothing answered at ${h.url}. Is this device online?`
+      : h.tokenRefused
+        ? `${host} does not recognise that token.`
+        : !h.health.originAllowed
+          ? `${host} does not accept ${location.origin}.`
+          : s.ready
+            ? `Standing by. The bridge on this machine is answering, so nothing goes through ${host}.`
+            : `On. Calls to online services go through ${host}. Your key and messages ` +
+              'pass through it and are not kept. Endpoints on this machine never go that way.';
+
+  return group('Hosted bridge', [
+    switchRow(`Fall back to ${host}`, h.enabled, toggle),
+    navRow('Token', {
+      value: h.token ? 'Set' : 'None',
+      sub: 'Your ivx/ai token',
+      onclick: async () => {
+        const next = await askToken();
+        if (next === null) return;
+        const after = await bridge.configureHosted({ token: next });
+        if (after.hosted.enabled && !after.hosted.ready) toast('Saved, but the hosted bridge refused it', 'err');
+        refreshSheet();
+      },
+    }),
+    navRow('Address', {
+      value: host,
+      sub: 'Only if you run the ivx/ai API yourself',
+      onclick: async () => {
+        const next = await promptText({
+          title: 'Hosted bridge address',
+          value: h.url,
+          placeholder: bridge.HOSTED_URL,
+        });
+        if (next === null) return;
+        await bridge.configureHosted({ url: next.trim() });
+        refreshSheet();
+      },
+    }),
+    linkRow('Get a token', API_HELP, 'Sign in with a wallet to make one'),
+  ], note);
+}
+
 /** The line under the switch: what is true right now, and what to do about it. */
 function statusNote(s) {
+  if (!s.enabled && s.hosted.ready) {
+    return 'Off. Calls to online services go through the hosted bridge below; ' +
+      'endpoints on this machine go straight from this page.';
+  }
   if (!s.enabled) {
     return bridge.EXTENSION
       ? 'Off. Provider calls go straight from this extension, which works for ' +
@@ -1384,7 +1482,7 @@ function statusNote(s) {
         'for endpoints that allow browser origins.';
   }
   if (!s.reachable) {
-    return `Nothing answered at ${s.url}. Start it with \`ivx-bridge\`, or ` +
+    return `Nothing answered at ${s.url}. Start it with \`ivxai-bridge\`, or ` +
       'turn this off to go direct again.';
   }
   if (!s.health.originAllowed) {

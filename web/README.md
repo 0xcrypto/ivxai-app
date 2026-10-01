@@ -80,7 +80,7 @@ machine.
 If a service does not publish a model list, choose **Type a model name**
 instead. Names you type are remembered.
 
-## The helper: ivx-bridge
+## The helper: ivxai-bridge
 
 Browsers do not let a web page talk to programs on your own computer, and many
 online services refuse calls that come from a web page. Without the helper,
@@ -96,7 +96,7 @@ A couple of cases can be fixed at the source instead:
 For everything else, run the helper that comes with the installable apps:
 
 ```sh
-ivx-bridge
+ivxai-bridge
 ```
 
 Then **Settings → CORS bypass → Look for the bridge**. It is off until you turn
@@ -146,6 +146,10 @@ the passphrase and the keys are gone, with no way back.
   history to send.
 - **Message actions**: copy, edit and run again from that point, retry, delete.
 - **Chat actions**: rename, duplicate, archive, save as a file.
+- **Right-click anything**: a message, a code block, a link, an attachment, a
+  chat in the list — the menu holds what that one thing can do. Holding Shift
+  gets the browser's own menu back, and anywhere you type keeps it anyway, so
+  spelling suggestions and paste are never taken away.
 - **Share link**: the chat travels inside the link itself, so no server holds a
   copy.
 - **Backup**: export everything, keys included only if you tick the box.

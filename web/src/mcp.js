@@ -12,7 +12,7 @@
              toggle, because a CORS failure is a fact about each server.
    - `stdio` a program on this machine. A browser cannot spawn processes, so
              this always goes through the bridge, which starts it and pipes
-             JSON-RPC over its stdin/stdout (/mcp/stdio in ivx-bridge). In the
+             JSON-RPC over its stdin/stdout (/mcp/stdio in ivxai-bridge). In the
              desktop app the bridge is built in, so it just works there.
 
    Tools are discovered with tools/list and cached. The cache is what the

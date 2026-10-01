@@ -40,10 +40,11 @@ import {
 import { openMarket, initStore } from './market.js';
 import {
   $, el, clear, toast, actionSnack, initSheet, openSheet, pushScreen, popScreen, closeSheet,
-  refreshSheet, setSheetTitle, entityScreen,
+  refreshSheet, setSheetTitle, entityScreen, sheetIsOpen,
   confirmAction, promptText, copyText, downloadJSON, downloadBlob, groupLabel, autosize,
   chooseFromList,
 } from './ui.js';
+import { openMenu, closeMenu } from './context-menu.js';
 
 const DEFAULTS = {
   systemPrompt: '',
@@ -789,6 +790,9 @@ async function refreshConversations() {
 }
 
 function renderConvList() {
+  // A menu anchored to a row that is about to be replaced is pointing at
+  // nothing; the same goes for the thread below.
+  closeMenu();
   const list = clear(dom.convList);
   const query = dom.search.value.trim().toLowerCase();
   const matches = c => !query || (c.title || '').toLowerCase().includes(query) ||
@@ -814,6 +818,8 @@ function renderConvList() {
   const convItem = conv => el('button', {
     class: `conv-item${conv.spawned ? ' is-spawned' : ''}${conv.id === state.conv?.id ? ' is-active' : ''}`,
     type: 'button',
+    // What the right-click menu reads back to find the chat a row stands for.
+    dataset: { convId: conv.id },
     onclick: () => { openConversation(conv.id); closeDrawer(); },
   }, [
     el('span', { class: 'conv-item-title', text: conv.title || 'Untitled' }),
@@ -1434,7 +1440,19 @@ function attachmentsNode(list) {
   return el('div', { class: 'att-grid' }, list.map(attachmentNode));
 }
 
+/* Which file a card on screen stands for. A card is a plain node with no
+   room for the record behind it, and the right-click menu needs that record
+   to open or save the thing that was clicked. Weak, so a rerendered thread
+   takes its old cards' entries with it. */
+const cardMeta = new WeakMap();
+
 function attachmentNode(meta) {
+  const node = attachmentCard(meta);
+  cardMeta.set(node, meta);
+  return node;
+}
+
+function attachmentCard(meta) {
   const label = el('span', { class: 'att-name', text: meta.name });
   const size = el('span', { class: 'att-size', text: attach.formatSize(meta.size) });
 
@@ -1542,6 +1560,11 @@ function replaceMessageNode(msg) {
   else node.remove();
 }
 
+const actionBtn = (icon, label, onclick, extra = '') => el('button', {
+  class: `msg-action ${icon} ${extra}`.trim(), type: 'button',
+  'aria-label': label, title: label, onclick,
+});
+
 function footNode(msg) {
   const bits = [];
   if (msg.model) bits.push(msg.model);
@@ -1550,19 +1573,11 @@ function footNode(msg) {
 
   return el('div', { class: 'msg-foot' }, [
     bits.length ? el('span', { class: 'msg-meta', text: bits.join(' · ') }) : el('span', { class: 'msg-meta' }),
-    el('button', {
-      class: 'msg-action', type: 'button', text: 'Copy',
-      onclick: async () => toast(await copyText(msg.content) ? 'Copied' : 'Copy failed'),
-    }),
-    msg.role === 'user' ? el('button', {
-      class: 'msg-action', type: 'button', text: 'Edit', onclick: () => editMessage(msg),
-    }) : null,
-    msg.role === 'assistant' ? el('button', {
-      class: 'msg-action', type: 'button', text: 'Retry', onclick: () => regenerate(msg),
-    }) : null,
-    el('button', {
-      class: 'msg-action danger', type: 'button', text: 'Delete', onclick: () => deleteOneMessage(msg),
-    }),
+    actionBtn('ri-file-copy-line', 'Copy',
+      async () => toast(await copyText(msg.content) ? 'Copied' : 'Copy failed')),
+    msg.role === 'user' ? actionBtn('ri-edit-line', 'Edit', () => editMessage(msg)) : null,
+    msg.role === 'assistant' ? actionBtn('ri-refresh-line', 'Retry', () => regenerate(msg)) : null,
+    actionBtn('ri-delete-bin-line', 'Delete', () => deleteOneMessage(msg), 'danger'),
   ]);
 }
 
@@ -1593,6 +1608,7 @@ function welcomeNode() {
 }
 
 function renderMessages(jump = false) {
+  closeMenu();
   const scroller = clear(dom.messages);
   if (state.shared) {
     // Read-only transcript: same message styling, no actions, no composer.
@@ -2673,26 +2689,46 @@ function chatSettingsScreen() {
   ]);
 }
 
-async function renameChat() {
-  const title = await promptText({ title: 'Rename chat', value: state.conv.title });
+/** The messages of a chat: the ones already on screen when it is the open
+    one, and whatever the database holds when it is not. */
+const messagesOf = conv => (conv.id === state.conv?.id
+  ? Promise.resolve(state.messages)
+  : store.listMessages(conv.id));
+
+/* Every action below takes the chat it acts on. The menus above the thread
+   pass nothing and get the open one; the right-click menu on a row in the
+   drawer passes that row's chat, which is usually not the open one. */
+
+async function renameChat(conv = state.conv) {
+  if (!conv) return;
+  const title = await promptText({ title: 'Rename chat', value: conv.title });
   if (title === null) return;
-  state.conv.title = title || 'Untitled';
-  if (!state.conv.draft) await persistConversation();
+  conv.title = title || 'Untitled';
+  if (conv.id === state.conv?.id) state.conv.title = conv.title;
+  // Written straight through rather than through persistConversation: naming
+  // a chat is not talking in it, and bumping updatedAt would send it to the
+  // top of the list as though it were.
+  if (!conv.draft) {
+    const { draft, ...record } = conv;
+    await store.putConversation(record);
+  }
   renderHeader();
-  renderConvList();
+  await refreshConversations();
   closeSheet();
 }
 
-async function duplicateChat() {
-  if (state.conv.draft) { toast('Nothing to duplicate yet'); return; }
+async function duplicateChat(conv = state.conv) {
+  if (!conv) return;
+  if (conv.draft) { toast('Nothing to duplicate yet'); return; }
+  const messages = await messagesOf(conv);
   const copy = {
-    ...state.conv, id: store.uid(), title: `${state.conv.title} (copy)`,
+    ...conv, id: store.uid(), title: `${conv.title} (copy)`,
     createdAt: Date.now(), updatedAt: Date.now(),
   };
   delete copy.draft;
   delete copy.archived;          // a copy starts fresh in the main list
   await store.putConversation(copy);
-  for (const m of state.messages) {
+  for (const m of messages) {
     const id = store.uid();
     // Fresh attachment records too: deleting either chat must leave the other
     // one whole, and both point at bytes of their own.
@@ -2710,23 +2746,25 @@ async function duplicateChat() {
 const slug = s => (s || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-')
   .replace(/^-|-$/g, '').slice(0, 48) || 'chat';
 
-async function exportChat(kind) {
+async function exportChat(kind, source = state.conv) {
+  if (!source) return;
+  const messages = await messagesOf(source);
   if (kind === 'json') {
     // A page field cannot survive the trip — a tab id means nothing to the
     // browser that reads this back — so it is not written down as if it could.
-    const { draft, pageField, ...conv } = state.conv;
+    const { draft, pageField, ...conv } = source;
     // Attachments ride along base64-encoded, which is what makes a chat with
     // pictures in it a large file. A backup that left them behind would not
     // be one.
-    const attachments = await attach.exportRecords(state.messages);
+    const attachments = await attach.exportRecords(messages);
     downloadJSON(`${slug(conv.title)}.json`, {
       app: 'ivx-ai-chat', version: 1, exportedAt: new Date().toISOString(),
-      conversation: conv, messages: state.messages,
+      conversation: conv, messages,
       ...(attachments.length ? { attachments } : {}),
     });
   } else {
-    const lines = [`# ${state.conv.title || 'Chat'}`, ''];
-    for (const m of state.messages) {
+    const lines = [`# ${source.title || 'Chat'}`, ''];
+    for (const m of messages) {
       const who = m.role === 'user' ? 'You'
         : m.role === 'tool' ? toolHeading(m)
         : 'Assistant';
@@ -2734,7 +2772,7 @@ async function exportChat(kind) {
       // Markdown has nowhere to put the file itself, so it gets named.
       if (m.attachments?.length) lines.push(attach.exportLine(m.attachments), '');
     }
-    downloadBlob(`${slug(state.conv.title)}.md`, new Blob([lines.join('\n')], { type: 'text/markdown' }));
+    downloadBlob(`${slug(source.title)}.md`, new Blob([lines.join('\n')], { type: 'text/markdown' }));
   }
   closeSheet();
 }
@@ -2874,7 +2912,12 @@ function shareScreen(url, base, withFiles = false) {
 function previewNode(msg) {
   const body = msg.role === 'user' ? el('div', { class: 'bubble' }) : el('div', { class: 'prose' });
   paintBody(body, msg);
-  return el('article', { class: `msg msg-${msg.role}${msg.error ? ' msg-error' : ''}` }, [body]);
+  // Carries its id like a live message does, so the right-click menu can find
+  // what it stands for in the bundle being previewed.
+  return el('article', {
+    class: `msg msg-${msg.role}${msg.error ? ' msg-error' : ''}`,
+    dataset: { id: msg.id },
+  }, [body]);
 }
 
 /** A share link in the URL is a chat to look at first. Nothing is saved and
@@ -2888,28 +2931,35 @@ async function acceptSharedLink() {
   return bundle;
 }
 
-async function clearChat() {
+async function clearChat(conv = state.conv) {
+  if (!conv) return;
   const ok = await confirmAction({
     title: 'Clear messages?', body: 'The chat stays, its messages go.', okText: 'Clear',
   });
   if (!ok) return;
-  stopStreaming();
-  if (!state.conv.draft) await store.clearMessages(state.conv.id);
-  state.messages = [];
-  renderMessages();
+  const open = conv.id === state.conv?.id;
+  if (open) stopStreaming();
+  if (!conv.draft) await store.clearMessages(conv.id);
+  if (open) {
+    state.messages = [];
+    renderMessages();
+  }
   closeSheet();
 }
 
-async function deleteChat() {
-  if (state.conv.draft) { startDraft(); closeSheet(); return; }
+async function deleteChat(conv = state.conv) {
+  if (!conv) return;
+  if (conv.draft) { startDraft(); closeSheet(); return; }
   const ok = await confirmAction({
     title: 'Delete chat?',
-    body: `“${state.conv.title || 'Untitled'}” and its messages will be removed from this browser.`,
+    body: `“${conv.title || 'Untitled'}” and its messages will be removed from this browser.`,
     okText: 'Delete',
   });
   if (!ok) return;
-  await store.deleteConversation(state.conv.id);
-  startDraft();
+  await store.deleteConversation(conv.id);
+  // Deleting the chat you are looking at leaves nothing to look at; deleting
+  // another one must not throw away the thread on screen.
+  if (conv.id === state.conv?.id) startDraft();
   await refreshConversations();
   closeSheet();
   toast('Chat deleted');
@@ -2923,11 +2973,11 @@ async function setArchived(conv, value) {
   await refreshConversations();
 }
 
-async function archiveChat() {
-  const conv = state.conv;
+async function archiveChat(conv = state.conv) {
   if (!conv || conv.draft) { toast('Nothing to archive yet'); return; }
   closeSheet();
   await setArchived(conv, !conv.archived);
+  if (conv.id === state.conv?.id) state.conv.archived = conv.archived;
   toast(conv.archived ? 'Chat archived' : 'Chat unarchived');
 }
 
@@ -3132,6 +3182,344 @@ function bindDropZone() {
   }
 }
 
+/* ── the right-click menu ──────────────────────────────────── */
+
+/* Right-clicking asks "what can I do with this?", and the answer depends
+   entirely on what "this" is: a chat in the drawer, a message, a fenced code
+   block, a file someone attached. One listener reads the target and builds
+   the menu for the innermost surface that has one, so what is on offer is
+   always what belongs to the thing under the pointer.
+
+   Two places keep the browser's own menu instead. Anywhere you can type,
+   because that menu carries spelling suggestions, undo, and a paste that
+   needs no permission — none of which a page can reproduce. And the whole app
+   while a sheet is open, because a sheet is modal, and a menu over one is two
+   things asking at once. Holding Shift gets the browser's menu back anywhere,
+   which is the escape hatch people already expect. */
+
+const TYPEABLE = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
+
+function bindContextMenu() {
+  document.addEventListener('contextmenu', ev => {
+    if (ev.shiftKey || sheetIsOpen()) return;
+    if (ev.target?.closest?.(TYPEABLE)) return;
+    const menu = menuFor(ev.target);
+    if (!menu?.sections.some(group => group.some(Boolean))) return;
+    ev.preventDefault();
+    openMenu({ ...menu, ...pointOf(ev) });
+  });
+}
+
+/** Which surface was clicked, innermost first. An attachment card and a code
+    block both sit inside a message, and a message inside the thread, so the
+    order of these tests is the whole of the rule. */
+function menuFor(target) {
+  if (!target?.closest) return null;
+
+  const chip = target.closest('.attach-chip');
+  if (chip) return trayChipMenu(chip);
+
+  const link = target.closest('a[href]');
+  if (link) return linkMenu(link);
+
+  const block = target.closest('.code-block');
+  if (block) return codeMenu(block);
+
+  const card = target.closest('.att-card');
+  if (cardMeta.has(card)) return attachmentMenu(card);
+
+  const message = target.closest('.msg');
+  if (message) return messageMenu(message);
+
+  const row = target.closest('.conv-item[data-conv-id]');
+  if (row) return chatMenu(state.conversations.find(c => c.id === row.dataset.convId));
+
+  if (target.closest('#modelChip')) return agentMenu();
+  if (target.closest('#drawer')) return drawerMenu();
+  if (target.closest('.main')) return state.shared ? sharedMenu() : chatMenu(state.conv);
+  return appMenu();
+}
+
+/** Where the menu goes, and whether it opens on a row. Shift+F10 and the menu
+    key raise a contextmenu event with no point of its own, so it is anchored
+    under whatever had focus and starts with the first item selected; a menu a
+    pointer asked for goes at the pointer and preselects nothing, because the
+    pointer has already chosen where it is. */
+function pointOf(ev) {
+  const keyboard = ev.mozInputSource === 6 || (!ev.clientX && !ev.clientY);
+  if (!keyboard) return { x: ev.clientX, y: ev.clientY, focusFirst: false };
+  const box = ev.target?.getBoundingClientRect?.();
+  return { x: (box?.left ?? 0) + 8, y: box?.bottom ?? 0, focusFirst: true };
+}
+
+/* ── the rows themselves ───────────────────────────────────── */
+
+async function copyAndSay(text, said = 'Copied') {
+  toast(await copyText(text) ? said : 'Copy failed');
+}
+
+/**
+ * The selected text, but only when the click landed inside the same element
+ * the selection is in.
+ *
+ * A highlight left behind in another message is not what was right-clicked,
+ * and offering to copy it would hand over something the person is no longer
+ * looking at.
+ */
+function selectionWithin(node) {
+  const selection = window.getSelection();
+  if (!node || !selection || selection.isCollapsed || !selection.rangeCount) return '';
+  const holder = selection.getRangeAt(0).commonAncestorContainer;
+  const element = holder.nodeType === Node.ELEMENT_NODE ? holder : holder.parentElement;
+  if (!element || !node.contains(element)) return '';
+  return selection.toString().trim();
+}
+
+/** What a selection can become. These lead any menu that has one, because
+    highlighting something first is a statement about what you meant. */
+function selectionRows(node, { quote = true } = {}) {
+  const text = selectionWithin(node);
+  if (!text) return [];
+  return [
+    { label: 'Copy selection', onSelect: () => copyAndSay(text) },
+    quote && !state.shared && { label: 'Quote in reply', onSelect: () => quoteInComposer(text) },
+  ];
+}
+
+/** Put the highlighted text in the composer as a quote — the thing people
+    reach for after selecting part of an answer, and otherwise a copy, a click
+    and some manual `>`s. */
+function quoteInComposer(text) {
+  const quote = text.split('\n').map(line => `> ${line}`).join('\n');
+  const standing = dom.input.value.trimEnd();
+  dom.input.value = `${standing ? `${standing}\n\n` : ''}${quote}\n\n`;
+  autosize(dom.input);
+  updateSendState();
+  dom.input.focus();
+  dom.input.setSelectionRange(dom.input.value.length, dom.input.value.length);
+}
+
+function linkMenu(link) {
+  const message = link.closest('.msg');
+  return {
+    heading: link.textContent.trim() || link.href,
+    sections: [
+      [
+        { label: 'Open in a new tab',
+          onSelect: () => window.open(link.href, '_blank', 'noopener,noreferrer') },
+        { label: 'Copy link', onSelect: () => copyAndSay(link.href, 'Link copied') },
+      ],
+      selectionRows(message || link),
+      ...messageSections(message),
+    ],
+  };
+}
+
+function codeMenu(block) {
+  const code = block.querySelector('code')?.textContent || '';
+  return {
+    // The language, which is what the block's own header says.
+    heading: block.querySelector('.code-head span')?.textContent || 'Code',
+    sections: [
+      [
+        // No quote row: pasting a fenced block back as `>` quoted lines is
+        // not what anyone means by copying part of some code.
+        ...selectionRows(block, { quote: false }),
+        { label: 'Copy code', onSelect: () => copyAndSay(code, 'Code copied') },
+      ],
+      ...messageSections(block.closest('.msg')),
+    ],
+  };
+}
+
+function attachmentMenu(card) {
+  const meta = cardMeta.get(card);
+  // Set by fillCard when the bytes turned out not to be in this browser —
+  // a shared chat, whose link could never have carried them.
+  const gone = card.classList.contains('att-missing');
+  return {
+    heading: meta.name,
+    sections: [
+      [
+        meta.kind === 'image' && { label: 'Open', disabled: gone, onSelect: () => openAttachment(meta) },
+        { label: 'Save to disk', disabled: gone, onSelect: () => saveAttachment(meta) },
+        { label: 'Copy file name', onSelect: () => copyAndSay(meta.name, 'Name copied') },
+      ],
+      ...messageSections(card.closest('.msg')),
+    ],
+  };
+}
+
+function messageMenu(node) {
+  const sections = [selectionRows(node), ...messageSections(node)];
+  return sections.some(group => group.some(Boolean)) ? { sections } : null;
+}
+
+/** The message a node on screen stands for. A shared chat is being previewed
+    out of a bundle rather than loaded from the database, so which list to look
+    in depends on which of the two is on screen. */
+const messageFor = node => {
+  const id = node?.dataset.id;
+  if (!id) return null;
+  const list = state.shared ? state.shared.messages : state.messages;
+  return list.find(m => m.id === id) || null;
+};
+
+/** What can be done to a message, as sections a surface inside it can append
+    to its own — right-clicking a code block is still right-clicking the
+    message the block is in. */
+function messageSections(node) {
+  const msg = messageFor(node);
+  if (!msg) return [];
+  const text = msg.role === 'assistant' ? visibleText(msg.content) : (msg.content || '');
+  const copy = [text && { label: 'Copy message', onSelect: () => copyAndSay(text) }];
+
+  // A shared chat is someone else's transcript: it can be read and copied,
+  // and there is nothing in it to change.
+  if (state.shared) return [copy];
+
+  // Editing, retrying and deleting all rewrite the thread from that point
+  // down, which is not a thing to do to a reply still arriving.
+  const busy = state.streaming?.convId === state.conv?.id;
+  return [
+    copy,
+    [
+      msg.role === 'user' && { label: 'Edit and resend', disabled: busy, onSelect: () => editMessage(msg) },
+      msg.role === 'assistant' && { label: 'Retry from here', disabled: busy, onSelect: () => regenerate(msg) },
+      msg.threadId && { label: 'Open thread', onSelect: () => openConversation(msg.threadId) },
+      { label: 'Delete message', danger: true, disabled: busy, onSelect: () => deleteOneMessage(msg) },
+    ],
+  ];
+}
+
+/* ── menus for the chrome ──────────────────────────────────── */
+
+/** A chat, wherever it was clicked: its row in the drawer, or the thread and
+    the bar above it when it is the one open. The rows that need the chat to
+    be loaded — its settings, a share link built from its messages — are only
+    offered for the open one. */
+function chatMenu(conv) {
+  if (!conv) return null;
+  const open = conv.id === state.conv?.id;
+  // A chat stays a draft until its first message is sent, so a draft is a
+  // chat with nothing in it. Copying, sharing, exporting and clearing it all
+  // end in "nothing yet" or an empty file; they are left out rather than
+  // offered and then refused.
+  const said = !conv.draft;
+  return {
+    // An unnamed draft has no name to put at the top, and "New chat" there
+    // would only say again what the row below it already offers.
+    heading: conv.title || (said ? 'Untitled' : ''),
+    sections: [
+      [
+        !open && { label: 'Open', onSelect: () => { openConversation(conv.id); closeDrawer(); } },
+        { label: 'New chat', onSelect: () => { startDraft(); closeDrawer(); dom.input.focus(); } },
+      ],
+      [
+        { label: 'Rename', onSelect: () => renameChat(conv) },
+        open && { label: 'Chat settings',
+          onSelect: () => openSheet({ title: 'Chat settings', render: chatSettingsScreen }) },
+        said && { label: 'Duplicate', onSelect: () => duplicateChat(conv) },
+        said && { label: conv.archived ? 'Unarchive' : 'Archive', onSelect: () => archiveChat(conv) },
+      ],
+      said ? [
+        open && { label: 'Share link…', onSelect: openShare },
+        { label: 'Export as Markdown', onSelect: () => exportChat('md', conv) },
+        { label: 'Export as JSON', onSelect: () => exportChat('json', conv) },
+      ] : [],
+      said ? [
+        { label: 'Clear messages', danger: true, onSelect: () => clearChat(conv) },
+        { label: 'Delete chat', danger: true, onSelect: () => deleteChat(conv) },
+      ] : [],
+    ],
+  };
+}
+
+function drawerMenu() {
+  const archived = state.conversations.filter(c => c.archived).length;
+  const active = state.conversations.length - archived;
+  return {
+    heading: 'Chats',
+    sections: [
+      [
+        { label: 'New chat', onSelect: () => { startDraft(); closeDrawer(); dom.input.focus(); } },
+        archived && {
+          label: state.showArchived ? 'Back to all chats' : `Archived · ${archived}`,
+          onSelect: () => {
+            state.showArchived = !state.showArchived;
+            state.threadView = null;
+            renderConvList();
+          },
+        },
+      ],
+      [
+        Boolean(active) && { label: 'Archive all chats', onSelect: archiveAll },
+        Boolean(archived) && { label: 'Unarchive all chats', onSelect: unarchiveAll },
+      ],
+      [
+        { label: 'Settings…', onSelect: () => { closeDrawer(); openSettings(shell); } },
+        { label: 'Store…', onSelect: () => { closeDrawer(); openMarket(shell); } },
+      ],
+      [{ label: 'Delete all chats', danger: true, onSelect: deleteEverything }],
+    ],
+  };
+}
+
+/** The chip over the composer names the agent answering, so its menu is about
+    that choice rather than about the chat. */
+function agentMenu() {
+  return {
+    heading: agentOf(state.conv)?.name || 'No agent',
+    sections: [
+      [
+        { label: 'Change agent', onSelect: openAgentPicker },
+        state.conv && { label: 'Chat settings',
+          onSelect: () => openSheet({ title: 'Chat settings', render: chatSettingsScreen }) },
+      ],
+      [{ label: 'Providers…', onSelect: () => openProviders(shell) }],
+    ],
+  };
+}
+
+/** A chip in the composer tray is one file or one mention waiting to be sent;
+    the only thing to do with it is take it back out. */
+function trayChipMenu(chip) {
+  const remove = chip.querySelector('.attach-chip-x');
+  if (!remove) return null;
+  return {
+    heading: chip.querySelector('.attach-chip-name')?.textContent || '',
+    sections: [[{ label: 'Remove', danger: true, onSelect: () => remove.click() }]],
+  };
+}
+
+/** Someone else's chat, on loan. Nothing here has been saved yet, so the menu
+    is the two ways out of the preview. */
+function sharedMenu() {
+  return {
+    heading: state.shared.conversation?.title || 'Shared chat',
+    sections: [
+      [{ label: 'Add to my chats', onSelect: addSharedChat }],
+      [{ label: 'Close preview', danger: true, onSelect: startDraft }],
+    ],
+  };
+}
+
+/** The fallback, for the parts of the shell that stand for the app itself. */
+function appMenu() {
+  return {
+    sections: [
+      [
+        { label: 'New chat', onSelect: () => { startDraft(); closeDrawer(); dom.input.focus(); } },
+        { label: 'Chats', onSelect: openDrawer },
+      ],
+      [
+        { label: 'Settings…', onSelect: () => openSettings(shell) },
+        { label: 'Store…', onSelect: () => openMarket(shell) },
+      ],
+    ],
+  };
+}
+
 function bindEvents() {
   $('#composer').addEventListener('submit', handleSubmit);
   dom.stop.addEventListener('click', stopStreaming);
@@ -3186,6 +3574,7 @@ function bindEvents() {
   $('#scrim').addEventListener('click', closeDrawer);
   $('#btnNewChat').addEventListener('click', () => { startDraft(); closeDrawer(); dom.input.focus(); });
   $('#btnChatMenu').addEventListener('click', openChatMenu);
+  bindContextMenu();
   $('#btnSettings').addEventListener('click', () => { closeDrawer(); openSettings(shell); });
   $('#btnStore').addEventListener('click', () => { closeDrawer(); openMarket(shell); });
   $('#btnListMenu').addEventListener('click', () => { closeDrawer(); openSheet({ title: 'Chats', render: listMenuScreen }); });
