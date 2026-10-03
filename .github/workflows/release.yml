@@ -382,6 +382,24 @@ jobs:
           fi
           echo "versionCode $BUILT, as expected"
 
+          # With a key configured, every APK has to come out signed by it. A
+          # secret that was pasted wrong otherwise ships APKs no phone will
+          # install, and the only sign of it is a filename ending -unsigned.
+          if [ -n "${ANDROID_KEYSTORE_FILE:-}" ]; then
+            APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+            find "$OUT/apk" -name '*.apk' | while read -r apk; do
+              "$APKSIGNER" verify "$apk" >/dev/null || { echo "::error::$apk is not signed"; exit 1; }
+            done
+            # The certificate fingerprint is what lets someone check a download
+            # is ours, and what Obtainium and AppVerifier pin. It only changes
+            # if the key does, which it must not.
+            FINGERPRINT=$("$APKSIGNER" verify --print-certs "$OUT/apk/universal/release/"*.apk \
+              | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)
+            echo "signed, certificate SHA-256 $FINGERPRINT"
+            echo "Android signing certificate SHA-256: \`$FINGERPRINT\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "ANDROID_CERT_SHA256=$FINGERPRINT" >> "$GITHUB_ENV"
+          fi
+
           mkdir -p dist
           # Signed or not, the file is the deliverable; only its name differs,
           # so take whatever is in the directory rather than spelling it out.
@@ -414,3 +432,15 @@ jobs:
           set -eu
           [ -n "$(ls -A dist)" ] || { echo "nothing was built"; exit 1; }
           gh release upload "$TAG" dist/* --clobber
+
+          # Under the signing note, once: a re-run must not add it twice.
+          if [ -n "${ANDROID_CERT_SHA256:-}" ]; then
+            BODY=$(gh release view "$TAG" --json body -q .body)
+            case "$BODY" in *"$ANDROID_CERT_SHA256"*) exit 0 ;; esac
+            {
+              printf '%s\n\n' "$BODY"
+              printf 'The Android signing certificate SHA-256 is `%s`.\n' "$ANDROID_CERT_SHA256"
+              printf '`apksigner verify --print-certs` on a download should show the same.\n'
+            } > notes.md
+            gh release edit "$TAG" --notes-file notes.md
+          fi

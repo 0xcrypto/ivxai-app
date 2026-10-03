@@ -101,7 +101,11 @@ brew install --cask ivxai-chat
 We do not pay Apple or Microsoft for a signing certificate, so both warn you
 the first time you open it. The release notes show what to click.
 
-Android and iOS work but are not published yet.
+On Android, download the APK from the same releases page:
+`ivxai-chat-<version>-android-arm64-v8a.apk` fits nearly every phone, and
+`-android-universal.apk` fits all of them, at three times the size. Android
+asks you to allow installing from your browser the first time. iOS works but is
+not published yet.
 
 **3. On your own server**
 
